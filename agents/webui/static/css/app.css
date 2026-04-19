@@ -372,6 +372,13 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .phase-banner.is-tool .spinner { border-top-color: var(--ask); }
 
+.phase-banner.is-cancelling {
+  background: linear-gradient(90deg,
+              rgba(239,68,68,.18) 0%, rgba(239,68,68,.04) 60%, transparent 100%);
+  border-color: rgba(239,68,68,.35);
+}
+.phase-banner.is-cancelling .spinner { border-top-color: var(--deny); }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- 消息区 "思考中" 气泡（LLM 首个 chunk 到达前显示） ---------- */
@@ -458,6 +465,44 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .btn-send:hover { background: var(--accent-2); }
 .btn-send:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 停止按钮：运行中与发送按钮互相替换，防止误发 */
+.btn-stop {
+  position: absolute;
+  right: 22px; bottom: 22px;
+  background: var(--deny);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-stop::before {
+  content: "";
+  display: inline-block;
+  width: 10px; height: 10px;
+  background: #fff;
+  border-radius: 2px;
+}
+.btn-stop:hover { filter: brightness(1.1); }
+.btn-stop:disabled {
+  opacity: .6; cursor: wait;
+  background: var(--ask);
+}
+/* 阶段条里内嵌的小停止按钮（可选：顶部也能看到一个小停止按钮） */
+.phase-banner .mini-stop {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: rgba(239,68,68,.2);
+  color: var(--deny);
+  border: 1px solid rgba(239,68,68,.4);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.phase-banner .mini-stop:hover { background: rgba(239,68,68,.35); }
 
 /* ========== Slash Menu ========== */
 .slash-menu {

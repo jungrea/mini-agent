@@ -100,6 +100,25 @@ def post_message(sid: str, req: MessageReq):
     return {"kind": "accepted", "state": sess.state()}
 
 
+@router.post("/sessions/{sid}/cancel")
+def cancel_session(sid: str):
+    """
+    请求停止该会话当前正在运行的一轮对话。
+
+    返回：
+        {"accepted": bool, "state": "idle"|"running", "reason"?: str}
+
+    说明：
+        * accepted=True 仅表示"已登记取消请求"，不代表 agent_loop 立即返回；
+          Anthropic SDK 的请求一旦发出就无法中途打断。
+        * 最终由前端通过 SSE 收到 round_end（cancelled=true）+ status=idle 确认。
+    """
+    sess = get_manager().get(sid)
+    if sess is None:
+        raise HTTPException(404, "session not found")
+    return sess.request_cancel()
+
+
 @router.post("/sessions/{sid}/slash")
 def post_slash(sid: str, req: SlashReq):
     sess = get_manager().get(sid)

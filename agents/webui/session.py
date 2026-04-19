@@ -131,6 +131,11 @@ class Session:
         self._pending_asks: dict[str, dict] = {}  # ask_id -> {event, answer}
         self._asks_lock: threading.Lock = threading.Lock()
 
+        # 取消标志：前端点"停止"按钮 → request_cancel() 置位；
+        # agent_loop 在多处调用 is_cancel_requested() 检查并决定早停。
+        # 每轮新消息开头会清掉上次的标志（避免"之前取消过，这次刚发消息就被取消"）。
+        self._cancel_requested: threading.Event = threading.Event()
+
         # worker 线程 + input_queue
         self._input_queue: Queue = Queue()
         self._stop_event: threading.Event = threading.Event()
@@ -170,6 +175,50 @@ class Session:
         ))
         return f"Mode switched to {mode}"
 
+    # ---------------- 取消 / 停止 ----------------
+
+    def request_cancel(self) -> dict:
+        """
+        请求中止当前正在运行的一轮对话。幂等。
+
+        语义：
+            * 若当前 state == idle，什么都不做，返回 {"accepted": False, ...}
+            * 若 state == running，置位取消标志；同时把 pending 的权限 ask
+              按 deny 唤醒（避免 worker 卡在 threading.Event.wait）
+            * agent_loop 在多处检查 cancel_check 回调：
+                - 每轮开头
+                - 每个 tool_use 处理前
+              检测到后会立即返回，worker 状态回到 idle。
+            * 一旦 LLM 调用已发出（client.messages.create 同步阻塞中），
+              无法打断 Anthropic SDK 的请求；但该请求返回后不会再进入下一轮。
+        """
+        state = self.state()
+        if state != "running":
+            return {"accepted": False, "state": state, "reason": "not running"}
+
+        self._cancel_requested.set()
+
+        # 唤醒所有 pending 的权限 ask，按 deny 处理
+        with self._asks_lock:
+            pend_items = list(self._pending_asks.items())
+            for ask_id, pend in pend_items:
+                pend["answer"] = "deny"
+                pend["event"].set()
+
+        self.events.publish(Event(
+            type=EventType.NOTICE, session_id=self.id,
+            data={"level": "warn",
+                  "text": "已请求停止。LLM 正在调用中时需等其返回；之后不再继续。"},
+        ))
+        return {"accepted": True, "state": state, "pending_asks_cleared": len(pend_items)}
+
+    def is_cancel_requested(self) -> bool:
+        return self._cancel_requested.is_set()
+
+    def _clear_cancel(self) -> None:
+        """每次开始一轮新对话时，清掉上次的取消标志。内部用。"""
+        self._cancel_requested.clear()
+
     def resolve_permission_ask(self, ask_id: str, decision: str) -> bool:
         """前端通过 WebSocket 回传决策。decision ∈ allow/deny/always。"""
         with self._asks_lock:
@@ -185,6 +234,13 @@ class Session:
         return True
 
     def stop(self) -> None:
+        # 请求 cancel，让 agent_loop 尽早返回
+        self._cancel_requested.set()
+        # 唤醒所有 pending 的权限 ask，避免 worker 卡死
+        with self._asks_lock:
+            for pend in self._pending_asks.values():
+                pend["answer"] = "deny"
+                pend["event"].set()
         self._stop_event.set()
         # 投一个哨兵把 worker 从 queue.get 里唤醒
         self._input_queue.put(("stop", ""))
@@ -291,9 +347,10 @@ class Session:
         ))
 
         # agent_loop 通过 progress 回调实时告诉我们"现在在哪一步"。
-        # 在这个集合里记下"已经在 tool_start 里推给前端的 tool_use_id"，
-        # 之后 _publish_tail 扫到同 id 的 tool_use 就跳过，避免重复渲染。
+        # 在这两个集合里分别记下"已经在 tool_start / tool_end 里推给前端的"
+        # 之后 _publish_tail 扫到同 id 的 tool_use / tool_result 就跳过。
         pushed_tool_use_ids: set[str] = set()
+        pushed_tool_result_ids: set[str] = set()
 
         def _progress(event: str, payload: dict) -> None:
             try:
@@ -333,20 +390,54 @@ class Session:
                         type=EventType.TOOL_START, session_id=self.id, data=payload,
                     ))
                 elif event == "tool_end":
+                    tid = payload.get("id", "")
+                    # 1) 先发 tool_end 事件（前端用来更新卡片状态为 ✓ 完成 · 耗时）
                     self.events.publish(Event(
-                        type=EventType.TOOL_END, session_id=self.id, data=payload,
+                        type=EventType.TOOL_END, session_id=self.id,
+                        data={
+                            "id": tid,
+                            "name": payload.get("name"),
+                            "duration_ms": payload.get("duration_ms"),
+                            "output_preview": payload.get("output_preview"),
+                            "error": payload.get("error", False),
+                        },
                     ))
+                    # 2) 立即把完整 tool_result 推给前端（不等 _publish_tail）
+                    output = payload.get("output", "")
+                    if output:
+                        pushed_tool_result_ids.add(tid)
+                        self.events.publish(Event(
+                            type=EventType.TOOL_RESULT, session_id=self.id,
+                            data={
+                                "tool_use_id": tid,
+                                "content": output,
+                            },
+                        ))
                 elif event == "tool_denied":
                     self.events.publish(Event(
                         type=EventType.TOOL_DENIED, session_id=self.id, data=payload,
                     ))
+                elif event == "cancelled":
+                    self.events.publish(Event(
+                        type=EventType.NOTICE, session_id=self.id,
+                        data={"level": "warn",
+                              "text": f"已在 {payload.get('stage', '?')} 处停止本轮"},
+                    ))
             except Exception:
                 pass
+
+        # 开始新一轮：清掉上次的取消标志
+        self._clear_cancel()
 
         before = snapshot_global()
         error_msg: Optional[str] = None
         try:
-            agent_loop(self.history, self.perms, hooks=self.hooks, progress=_progress)
+            agent_loop(
+                self.history, self.perms,
+                hooks=self.hooks,
+                progress=_progress,
+                cancel_check=self.is_cancel_requested,
+            )
         except Exception as e:  # pragma: no cover - 运行时保护
             error_msg = str(e)
             self.events.publish(Event(
@@ -354,32 +445,46 @@ class Session:
                 data={"message": error_msg},
             ))
 
-        # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的 tool_use）
-        self._publish_tail(marker, pushed_tool_use_ids)
+        # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的 tool_use / tool_result）
+        self._publish_tail(marker, pushed_tool_use_ids, pushed_tool_result_ids)
 
         after = snapshot_global()
         self.usage.apply_diff(before, after)
+        cancelled = self.is_cancel_requested()
         self.events.publish(Event(
             type=EventType.USAGE, session_id=self.id, data=self.usage.to_dict(),
         ))
         self.events.publish(Event(
-            type=EventType.ROUND_END, session_id=self.id, data={"error": error_msg},
+            type=EventType.ROUND_END, session_id=self.id,
+            data={"error": error_msg, "cancelled": cancelled},
         ))
         self.events.publish(Event(
             type=EventType.PHASE, session_id=self.id,
             data={"state": "idle", "label": ""},
         ))
+        if cancelled:
+            self.events.publish(Event(
+                type=EventType.NOTICE, session_id=self.id,
+                data={"level": "ok", "text": "本轮对话已停止。"},
+            ))
+        # 清理取消标志，避免下次发消息时被误 carry over
+        self._clear_cancel()
         self.updated_at = time.time()
         self._set_state("idle")
 
-    def _publish_tail(self, from_index: int, skip_tool_use_ids: set = None) -> None:
+    def _publish_tail(self, from_index: int,
+                      skip_tool_use_ids: set = None,
+                      skip_tool_result_ids: set = None) -> None:
         """
         扫 history[from_index:]，按类型把每条 content 拆成事件发出去。
 
-        skip_tool_use_ids: 已在 progress 回调里流式推给前端的 tool_use id 集合；
-            这里遇到同 id 的 tool_use block 就跳过，避免重复渲染。
+        skip_tool_use_ids:    已在 progress 回调里流式推给前端的 tool_use id 集合；
+                              这里遇到同 id 的 tool_use block 就跳过，避免重复渲染。
+        skip_tool_result_ids: 已在 progress tool_end 里流式推给前端的 tool_use id 集合；
+                              这里遇到同 id 的 tool_result block 就跳过。
         """
-        skip = skip_tool_use_ids or set()
+        skip_use = skip_tool_use_ids or set()
+        skip_res = skip_tool_result_ids or set()
         for msg in self.history[from_index:]:
             role = msg.get("role")
             content = msg.get("content")
@@ -387,10 +492,13 @@ class Session:
                 # 这是一条 tool_result-only 的 user 消息（agent_loop 产物）
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_use_id = block.get("tool_use_id")
+                        if tool_use_id in skip_res:
+                            continue   # 已在 tool_end 时流式推过
                         self.events.publish(Event(
                             type=EventType.TOOL_RESULT, session_id=self.id,
                             data={
-                                "tool_use_id": block.get("tool_use_id"),
+                                "tool_use_id": tool_use_id,
                                 "content": block.get("content"),
                             },
                         ))
@@ -420,7 +528,7 @@ class Session:
                             ))
                         elif btype == "tool_use":
                             tid = b.get("id")
-                            if tid in skip:
+                            if tid in skip_use:
                                 continue   # 已由 progress 流式推过
                             self.events.publish(Event(
                                 type=EventType.TOOL_USE, session_id=self.id,

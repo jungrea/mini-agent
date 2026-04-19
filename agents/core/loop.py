@@ -79,6 +79,16 @@ def _safe_preview(output: Any, limit: int = 160) -> str:
     return preview
 
 
+def _is_cancelled(cancel_check: Optional[Callable[[], bool]]) -> bool:
+    """检查外部是否请求了早停；任何异常都按"未取消"处理。"""
+    if cancel_check is None:
+        return False
+    try:
+        return bool(cancel_check())
+    except Exception:
+        return False
+
+
 @contextmanager
 def _spinning(label: str) -> Iterator[None]:
     """
@@ -101,7 +111,8 @@ def _spinning(label: str) -> Iterator[None]:
 def agent_loop(messages: list,
                perms: PermissionManager | None = None,
                hooks: HookManager | None = None,
-               progress: Optional[ProgressCallback] = None) -> None:
+               progress: Optional[ProgressCallback] = None,
+               cancel_check: Optional[Callable[[], bool]] = None) -> None:
     """
     主循环。就地修改 messages。
 
@@ -118,6 +129,11 @@ def agent_loop(messages: list,
                       * "tool_start"    —— 某个工具即将执行；payload: {id, name, input}
                       * "tool_end"      —— 某个工具执行结束；payload: {id, name, duration_ms, output_preview}
                       * "tool_denied"   —— 工具被权限/用户/hook 拒绝；payload: {id, name, reason}
+                      * "cancelled"     —— 外部请求早停（cancel_check 返回 True），主循环退出
+        cancel_check: 可选的取消检查函数（webui stop 按钮用）。每轮开头 + 每次工具调用前 + 工具结束后
+                      都会调用一次；返回 True 即中止主循环。注意：一旦 LLM 调用已发出，
+                      无法中途打断 Anthropic SDK 的同步请求——但可以确保不再进入下一轮 / 不再跑下一个工具。
+                      None 时完全无影响（CLI / teammate 路径默认如此）。
 
     返回：
         None —— 以模型发出非 tool_use 响应（即纯文本回答）为终止条件
@@ -127,6 +143,11 @@ def agent_loop(messages: list,
     rounds_without_todo = 0
 
     while True:
+        # 每轮开始前先检查外部是否请求早停
+        if _is_cancelled(cancel_check):
+            _safe_call(progress, "cancelled", {"stage": "round_start"})
+            return
+
         _safe_call(progress, "round_start", {})
 
         # --- s06: 每轮必做的轻量压缩 -------------------------------------
@@ -253,6 +274,26 @@ def agent_loop(messages: list,
             if block.type != "tool_use":
                 continue
 
+            # 每次处理一个 tool_use 前，给外部早停的机会。
+            # 此时如果 cancel，已经 LLM 返回的 tool_use 都当作未执行；但为了
+            # messages 结构合法（tool_use 必须配 tool_result），我们给每个未执行
+            # 的 tool_use 补一个 "Cancelled by user" tool_result，然后 append 到
+            # history 再 return。
+            if _is_cancelled(cancel_check):
+                _safe_call(progress, "cancelled", {"stage": "pre_tool", "tool": block.name})
+                # 把当前这一轮响应里**所有** tool_use 全部补成 cancelled tool_result
+                for b in response.content:
+                    if b.type == "tool_use":
+                        already_done = any(r.get("tool_use_id") == b.id for r in results)
+                        if not already_done:
+                            results.append({
+                                "type": "tool_result",
+                                "tool_use_id": b.id,
+                                "content": "Cancelled by user before tool execution.",
+                            })
+                messages.append({"role": "user", "content": results})
+                return
+
             # 记录是否本轮有 compress 请求（需要延后到 results 处理完再做）
             if block.name == "compress":
                 manual_compress = True
@@ -335,6 +376,7 @@ def agent_loop(messages: list,
                 "id": block.id, "name": block.name,
                 "input": {k: v for k, v in tool_input.items() if k != "tool_use_id"},
             })
+            _tool_error = False
             try:
                 # spinner 让用户感知到"正在执行工具 xxx"；
                 # 工具内部若有自己的输出（write/flush），会因 spinner 行用 \r
@@ -344,11 +386,16 @@ def agent_loop(messages: list,
             except Exception as e:
                 # 不让工具异常中断整个循环；把错误作为 tool_result 回传 LLM
                 output = f"Error: {e}"
+                _tool_error = True
             _tool_ms = int((_time_now() - _tool_t0) * 1000)
             _safe_call(progress, "tool_end", {
                 "id": block.id, "name": block.name,
                 "duration_ms": _tool_ms,
                 "output_preview": _safe_preview(output),
+                # 携带完整 output（pre/post hook 的注记在 progress 路径里不体现，
+                # 那些注记只走 tool_result 回给 LLM 用，不影响前端显示真实输出）。
+                "output": str(output),
+                "error": _tool_error,
             })
 
             # ========= PostToolUse hook（s08 融合点 2）=========

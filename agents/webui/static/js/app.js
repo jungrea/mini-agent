@@ -1,16 +1,20 @@
 // app.js —— 应用入口，串联所有模块。
+//
+// 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
+// 的强缓存。修改任何 js 模块后，把 ?v=7 改成新值并同步更新 index.html 里
+// 主入口 app.js?v=7 的值（保持一致），浏览器会重新下载所有模块。
 
-import { api }            from "./api.js";
-import { stream }         from "./stream.js";
-import { ws }             from "./ws.js";
-import { chat }           from "./chat.js";
-import { hud }            from "./hud.js";
-import { notify }         from "./notify.js";
-import { makeSessions }   from "./sessions.js";
-import { makeCronPanel }  from "./cron_panel.js";
-import { initSlash }      from "./slash.js";
-import { permission }    from "./permission.js";
-import { phase }          from "./phase.js";
+import { api }            from "./api.js?v=7";
+import { stream }         from "./stream.js?v=7";
+import { ws }             from "./ws.js?v=7";
+import { chat }           from "./chat.js?v=7";
+import { hud }            from "./hud.js?v=7";
+import { notify }         from "./notify.js?v=7";
+import { makeSessions }   from "./sessions.js?v=7";
+import { makeCronPanel }  from "./cron_panel.js?v=7";
+import { initSlash }      from "./slash.js?v=7";
+import { permission }     from "./permission.js?v=7";
+import { phase }          from "./phase.js?v=7";
 
 let currentSessionId = null;
 let sessionsUI;
@@ -30,8 +34,20 @@ async function init() {
   // -- 输入框 + 发送 --
   const box = document.getElementById("inputBox");
   const btn = document.getElementById("sendBtn");
+  const stopBtn = document.getElementById("stopBtn");
   btn.addEventListener("click", submitFromInput);
+  stopBtn.addEventListener("click", requestStop);
+  // 阶段条里的 mini 停止按钮也走同一回调
+  phase.bindStop(requestStop);
+
   box.addEventListener("keydown", (ev) => {
+    // Esc 或 Ctrl+. 停止（任何时候 running 都能用）
+    if ((ev.key === "Escape" || (ev.key === "." && ev.ctrlKey)) &&
+        document.getElementById("sessionState").textContent.startsWith("running")) {
+      ev.preventDefault();
+      requestStop();
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey) {
       // 如果菜单开着，slash.js 里的 Enter 会先处理（执行命令）
       // 到这儿就是普通发送
@@ -73,9 +89,23 @@ function setInputState(state) {
   const pill = document.getElementById("sessionState");
   pill.className = "pill " + (state === "running" ? "pill-running" : "pill-idle");
   pill.textContent = state === "running" ? "running · 处理中" : "idle";
-  const btn = document.getElementById("sendBtn");
-  btn.disabled = (state === "running");
-  btn.textContent = state === "running" ? "处理中…" : "发送";
+  const sendBtn = document.getElementById("sendBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  if (state === "running") {
+    sendBtn.classList.add("is-hidden");
+    sendBtn.style.display = "none";
+    stopBtn.classList.remove("is-hidden");
+    stopBtn.style.display = "";
+    stopBtn.disabled = false;
+    stopBtn.textContent = "停止";
+  } else {
+    stopBtn.classList.add("is-hidden");
+    stopBtn.style.display = "none";
+    sendBtn.classList.remove("is-hidden");
+    sendBtn.style.display = "";
+    sendBtn.disabled = false;
+    sendBtn.textContent = "发送";
+  }
 }
 
 function setModeUI(mode) {
@@ -169,6 +199,28 @@ async function submitFromInput() {
   }
 }
 
+async function requestStop() {
+  if (!currentSessionId) return;
+  const stopBtn = document.getElementById("stopBtn");
+  if (stopBtn) {
+    stopBtn.disabled = true;
+    stopBtn.textContent = "停止中…";
+  }
+  phase.set("cancelling", "正在停止…（等 LLM 当前调用返回）");
+  try {
+    const res = await api.cancelSession(currentSessionId);
+    if (res && res.accepted === false) {
+      notify.show({ level: "info", title: "无需停止", body: res.reason || res.state });
+      if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = "停止"; }
+    } else {
+      notify.show({ level: "warn", title: "已请求停止", body: "LLM 调用返回后将中止" });
+    }
+  } catch (e) {
+    notify.show({ level: "error", title: "停止失败", body: e.message });
+    if (stopBtn) { stopBtn.disabled = false; stopBtn.textContent = "停止"; }
+  }
+}
+
 // ================= 事件处理 =================
 
 function handleSessionEvent(ev) {
@@ -198,6 +250,7 @@ function handleSessionEvent(ev) {
       phase.reset();
       chat.removeTyping();
       if (data && data.error) chat.addError(`Round error: ${data.error}`);
+      if (data && data.cancelled) chat.addNotice("⏹ 本轮对话已停止（由用户请求）", "warn");
       sessionsUI.refresh();
       break;
     case "notice":
