@@ -1,6 +1,6 @@
 # mini-agent
 
-> 一个可本地运行、可扩展的最小 AI Agent 框架。同时提供命令行 REPL 与浏览器 WebUI 两种入口；支持多会话、多轮对话、工具调用、权限管控、定时任务、外部 Hook 扩展、子智能体协作等完整能力， 架构源自learn-claude-code教程（https://learn.shareai.run/zh/）。
+> 一个可本地运行、可扩展的最小 AI Agent 框架。同时提供命令行 REPL 与浏览器 WebUI 两种入口；支持多会话、多轮对话、工具调用、权限管控、定时任务、外部 Hook 扩展、子智能体协作等完整能力， 架构源自learn-claude-code教程 https://learn.shareai.run/zh/ 
 
 ![python](https://img.shields.io/badge/python-%E2%89%A53.10-blue)
 ![framework](https://img.shields.io/badge/framework-FastAPI%20%2B%20Anthropic%20SDK-green)
