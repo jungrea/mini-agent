@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>mini-agent WebUI</title>
+<link rel="stylesheet" href="/static/css/app.css?v=5" />
+</head>
+<body>
+<!-- ========== Topbar ========== -->
+<header id="topbar">
+  <div class="topbar-left">
+    <span class="logo">🤖 mini-agent</span>
+    <span class="current-title" id="currentTitle">未选择会话</span>
+  </div>
+
+  <div class="topbar-mid">
+    <div id="hud" class="hud" title="上下文占用（对齐 auto_compact 阈值）">
+      <span class="hud-label">ctx</span>
+      <div class="hud-bar-wrap">
+        <div class="hud-bar" id="hudBar"></div>
+      </div>
+      <span class="hud-pct" id="hudPct">0.0%</span>
+      <span class="hud-tokens" id="hudTokens">0 / 100,000</span>
+      <span class="hud-delta" id="hudDelta"></span>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <select id="modeSelect" class="mode-select" title="权限模式">
+      <option value="default">default</option>
+      <option value="plan">plan</option>
+      <option value="auto">auto</option>
+    </select>
+    <button id="bellBtn" class="bell" title="通知历史">
+      🔔<span class="badge is-hidden" id="bellBadge" style="display:none">0</span>
+    </button>
+  </div>
+</header>
+
+<!-- ========== Main Layout ========== -->
+<div id="app">
+  <!-- 左栏：会话列表 + cron 面板 -->
+  <aside id="sidebar">
+    <section class="sidebar-block">
+      <div class="sidebar-head">
+        <span>会话</span>
+        <button id="newSessionBtn" class="btn-primary">+ 新建</button>
+      </div>
+      <ul id="sessionList" class="session-list"></ul>
+    </section>
+
+    <section class="sidebar-block">
+      <div class="sidebar-head">
+        <span>定时任务</span>
+        <div>
+          <button id="cronRefreshBtn" class="btn-ghost" title="刷新">⟳</button>
+          <button id="cronTestBtn" class="btn-ghost" title="手动触发测试通知">test</button>
+        </div>
+      </div>
+      <ul id="cronList" class="cron-list"></ul>
+      <div class="cron-log-head">最近 fire 日志</div>
+      <ul id="cronLog" class="cron-log"></ul>
+    </section>
+  </aside>
+
+  <!-- 中栏：对话流 -->
+  <main id="main">
+    <div id="messages" class="messages">
+      <div class="empty-hint" id="emptyHint">
+        点击左上角「+ 新建」开启一段对话。
+      </div>
+    </div>
+
+    <div id="inputArea">
+      <div id="phaseBanner" class="phase-banner is-hidden" style="display:none">
+        <div class="spinner"></div>
+        <div class="label" id="phaseLabel">LLM 思考中…</div>
+        <div class="elapsed" id="phaseElapsed">0.0s</div>
+      </div>
+      <div id="slashMenu" class="slash-menu is-hidden" style="display:none"></div>
+      <div id="statusBar" class="status-bar">
+        <span id="sessionState" class="pill pill-idle">idle</span>
+        <span id="currentMode" class="pill pill-mode">default</span>
+      </div>
+      <textarea id="inputBox" rows="3"
+        placeholder="输入消息（Shift+Enter 换行，回车发送，/ 呼出斜杠命令）"></textarea>
+      <button id="sendBtn" class="btn-send">发送</button>
+    </div>
+  </main>
+</div>
+
+<!-- ========== Permission Modal ========== -->
+<div id="permModal" class="modal is-hidden" style="display:none">
+  <div class="modal-box">
+    <h3>权限请求</h3>
+    <div class="modal-row"><label>工具</label><span id="permTool">-</span></div>
+    <div class="modal-row"><label>参数</label>
+      <pre id="permInput"></pre>
+    </div>
+    <div class="modal-row"><label>超时</label>
+      <span id="permTimeout">0s</span> 后自动拒绝
+    </div>
+    <div class="modal-btns">
+      <button id="permAllow" class="btn-allow">允许本次</button>
+      <button id="permAlways" class="btn-always">始终允许</button>
+      <button id="permDeny" class="btn-deny">拒绝</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Toasts ========== -->
+<div id="toasts" class="toasts"></div>
+
+<!-- ========== Scripts (native ES modules, no build step) ========== -->
+<script type="module" src="/static/js/app.js?v=5"></script>
+</body>
+</html>

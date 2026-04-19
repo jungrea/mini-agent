@@ -1,0 +1,7 @@
+anthropic>=0.39.0
+python-dotenv>=1.0.0
+
+# WebUI（webui/ 子包）可选依赖；不启 WebUI 则无需安装
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0

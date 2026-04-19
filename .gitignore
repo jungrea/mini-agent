@@ -1,0 +1,120 @@
+# ============================================================
+# mini-agent .gitignore
+# ============================================================
+# 注：gitignore 不支持行内注释（# 必须在行首），否则规则会把注释也算进去
+# 所以这里每条规则独占一行，注释放在规则上方。
+
+# -------------------- 敏感信息 / 个人配置 --------------------
+
+# API Key / MODEL_ID 等，绝对不要提交；保留 .env.example 作为模板
+.env
+
+# 本地 hook 配置，保留 .hooks.json.example 作为模板
+.hooks.json
+
+# hook 临时禁用标记
+.hooks.disabled
+
+# 示例 hook 产生的审计日志
+.hooks.audit.log
+
+
+# -------------------- 运行时产物 --------------------
+
+# webui 会话历史 / scheduled_tasks / cron.lock 等
+.claude/
+
+# 文件任务 task_<id>.json
+.tasks/
+
+# 超阈值工具输出落盘
+.task_outputs/
+
+# teammate 配置 + inbox
+.team/
+
+# auto_compact 前的完整对话备份
+.transcripts/
+
+# RoundEnd hook 示例产生的对话日志（按需保留或忽略）
+every_talk_end.md
+
+
+# -------------------- 用户个人笔记（按需取舍，想提交就注释掉下一行）--------------------
+
+ai_models_news.md
+
+
+# -------------------- Python 字节码 / 打包 --------------------
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+
+
+# -------------------- 虚拟环境 --------------------
+
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+
+# -------------------- 测试 / 覆盖率 --------------------
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+
+# -------------------- 类型检查缓存 --------------------
+
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+
+# -------------------- IDE / 编辑器 --------------------
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+
+# -------------------- 系统垃圾 --------------------
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+
+# -------------------- Jupyter --------------------
+
+.ipynb_checkpoints/
+
+
+# -------------------- 日志 --------------------
+
+*.log

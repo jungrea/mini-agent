@@ -1,0 +1,44 @@
+{
+  "$schema_note": "Mini-agent hook 配置文件。把本文件复制为 .hooks.json 即可启用。每条 hook 的 command 会被 shell 执行；通过 exit code 控制行为：0=continue / 1=block(工具不执行，stderr 作为阻断理由) / 2=inject(工具正常执行，stderr 追加到 tool_result)。可用环境变量：HOOK_EVENT / HOOK_TOOL_NAME / HOOK_TOOL_INPUT / HOOK_TOOL_OUTPUT。放 .hooks.disabled 空文件可临时关闭；REPL 里 `/hooks off` 也可。",
+
+  "hooks": {
+    "SessionStart": [
+      {
+        "command": "echo '[hook] session started in '$PWD' at '$(date +%T)"
+      }
+    ],
+
+    "PreToolUse": [
+      {
+        "_comment": "示例：对任何 bash 调用做简单安全扫描。检测到 'curl .* api_key' 则 exit 1 block。",
+        "matcher": "bash",
+        "command": "if echo \"$HOOK_TOOL_INPUT\" | grep -qE 'curl[^|]*api[_-]?key'; then echo 'refuse: suspicious credential in curl' >&2; exit 1; fi"
+      },
+      {
+        "_comment": "示例：write_file 之前 log 目标路径，exit 0 continue。不影响执行，仅观察用。",
+        "matcher": "write_file",
+        "command": "python3 -c 'import json,os,sys; d=json.loads(os.environ[\"HOOK_TOOL_INPUT\"]); print(f\"[hook] will write: {d.get(\\\"path\\\",\\\"?\\\")}\", flush=True)'"
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "_comment": "示例：write_file 之后给 LLM 注入一条 lint 提示（exit 2 => inject stderr 到 tool_result）。",
+        "matcher": "write_file",
+        "command": "echo 'reminder: please run tests/linters for the edited file' >&2; exit 2"
+      },
+      {
+        "_comment": "示例：所有工具调用都写一条 append-only 审计日志（exit 0，对 agent 无可见影响）。",
+        "matcher": "*",
+        "command": "python3 -c 'import os,datetime,pathlib; p=pathlib.Path(\".hooks.audit.log\"); p.open(\"a\").write(f\"{datetime.datetime.now().isoformat()} {os.environ[\\\"HOOK_TOOL_NAME\\\"]}\\n\")'"
+      }
+    ],
+
+    "RoundEnd": [
+      {
+        "_comment": "示例：每轮对话自然结束（LLM 不再要求调用工具）时追加一条时间戳 + 本轮最后的 assistant 文本预览。HOOK_TOOL_INPUT 的 JSON 里带 stop_reason / last_assistant_text。",
+        "command": "python3 -c 'import os,json,datetime,pathlib; ctx=json.loads(os.environ.get(\"HOOK_TOOL_INPUT\",\"{}\")); ts=datetime.datetime.now().isoformat(timespec=\"seconds\"); line=f\"- [{ts}] stop={ctx.get(\\\"stop_reason\\\",\\\"?\\\")} · {ctx.get(\\\"last_assistant_text\\\",\\\"\\\")[:80]}\\n\"; pathlib.Path(\"dialogue_history.md\").open(\"a\").write(line)'"
+      }
+    ]
+  }
+}
