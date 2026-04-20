@@ -33,6 +33,8 @@ export async function initSlash({ onExecute }) {
 
   inp.addEventListener("keydown", (ev) => {
     if (!menuVisible) return;
+    // IME 合成中不要拦任何键，交给输入法
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === "ArrowDown") {
       ev.preventDefault();
       activeIdx = (activeIdx + 1) % filtered.length;

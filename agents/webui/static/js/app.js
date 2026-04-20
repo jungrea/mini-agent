@@ -1,20 +1,20 @@
 // app.js —— 应用入口，串联所有模块。
 //
 // 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
-// 的强缓存。修改任何 js 模块后，把 ?v=7 改成新值并同步更新 index.html 里
-// 主入口 app.js?v=7 的值（保持一致），浏览器会重新下载所有模块。
+// 的强缓存。修改任何 js 模块后，把 ?v=8 改成新值并同步更新 index.html 里
+// 主入口 app.js?v=8 的值（保持一致），浏览器会重新下载所有模块。
 
-import { api }            from "./api.js?v=7";
-import { stream }         from "./stream.js?v=7";
-import { ws }             from "./ws.js?v=7";
-import { chat }           from "./chat.js?v=7";
-import { hud }            from "./hud.js?v=7";
-import { notify }         from "./notify.js?v=7";
-import { makeSessions }   from "./sessions.js?v=7";
-import { makeCronPanel }  from "./cron_panel.js?v=7";
-import { initSlash }      from "./slash.js?v=7";
-import { permission }     from "./permission.js?v=7";
-import { phase }          from "./phase.js?v=7";
+import { api }            from "./api.js?v=8";
+import { stream }         from "./stream.js?v=8";
+import { ws }             from "./ws.js?v=8";
+import { chat }           from "./chat.js?v=8";
+import { hud }            from "./hud.js?v=8";
+import { notify }         from "./notify.js?v=8";
+import { makeSessions }   from "./sessions.js?v=8";
+import { makeCronPanel }  from "./cron_panel.js?v=8";
+import { initSlash }      from "./slash.js?v=8";
+import { permission }     from "./permission.js?v=8";
+import { phase }          from "./phase.js?v=8";
 
 let currentSessionId = null;
 let sessionsUI;
@@ -41,6 +41,10 @@ async function init() {
   phase.bindStop(requestStop);
 
   box.addEventListener("keydown", (ev) => {
+    // ---- 输入法合成中：Enter 仅用于选词，不要触发发送 / 停止 ----
+    // ev.isComposing 在 IME 弹候选浮层时为 true；部分老浏览器用 keyCode=229
+    if (ev.isComposing || ev.keyCode === 229) return;
+
     // Esc 或 Ctrl+. 停止（任何时候 running 都能用）
     if ((ev.key === "Escape" || (ev.key === "." && ev.ctrlKey)) &&
         document.getElementById("sessionState").textContent.startsWith("running")) {

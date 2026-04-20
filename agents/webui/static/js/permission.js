@@ -14,6 +14,8 @@ export const permission = {
     $("permDeny").addEventListener("click",   () => resolve("deny"));
     document.addEventListener("keydown", (ev) => {
       if (!isVisible($("permModal"))) return;
+      // IME 合成中不要触发（万一权限弹出时正在别的地方打字）
+      if (ev.isComposing || ev.keyCode === 229) return;
       if (ev.key === "Enter") resolve("allow");
       else if (ev.key === "Escape") resolve("deny");
     });
