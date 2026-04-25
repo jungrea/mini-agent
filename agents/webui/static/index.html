@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>mini-agent WebUI</title>
-<link rel="stylesheet" href="/static/css/app.css?v=8" />
+<link rel="stylesheet" href="/static/css/app.css?v=9" />
 <script>
   // 主题首帧防闪烁：在样式应用前把上次选择写到 <html data-theme>。
   // localStorage 可能被浏览器禁用（隐私模式等），做好容错。
@@ -126,7 +126,23 @@
 <!-- ========== Toasts ========== -->
 <div id="toasts" class="toasts"></div>
 
+<!-- ========== Notification Drawer（点铃铛侧拉展开）========== -->
+<div id="notifyDrawerBackdrop" class="notify-drawer-backdrop is-hidden" style="display:none" hidden></div>
+<aside id="notifyDrawer" class="notify-drawer is-hidden" style="display:none" hidden aria-label="通知历史">
+  <header class="notify-drawer-head">
+    <span class="notify-drawer-title">🔔 通知历史</span>
+    <div class="notify-drawer-actions">
+      <button id="notifyDrawerClear" class="btn-ghost" title="清空历史">清空</button>
+      <button id="notifyDrawerClose" class="btn-ghost" title="关闭 (Esc)">✕</button>
+    </div>
+  </header>
+  <div class="notify-drawer-empty is-hidden" id="notifyDrawerEmpty" style="display:none">
+    暂无通知
+  </div>
+  <ul id="notifyDrawerList" class="notify-drawer-list"></ul>
+</aside>
+
 <!-- ========== Scripts (native ES modules, no build step) ========== -->
-<script type="module" src="/static/js/app.js?v=12"></script>
+<script type="module" src="/static/js/app.js?v=14"></script>
 </body>
 </html>

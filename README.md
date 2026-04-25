@@ -57,14 +57,8 @@ python -m agents.webui --port 9000 --no-open
 
 WebUI 一页三栏：左栏会话列表 + 定时任务面板，中栏对话流（顶部 ctx HUD、底部输入 + 斜杠补全），权限请求以模态框弹出。
 
-#### C. 单轮非交互
-
-```bash
-python -m agents run -p "列出当前目录的所有 python 文件并统计行数"
-python -m agents tasks              # 列出所有文件任务
-python -m agents team               # 列出 teammate 状态
-python -m agents rules --mode plan  # 展示 plan 模式下的默认权限规则
-```
+> 一次性的辅助查看能力（文件任务、teammate、收件箱、权限规则）统一通过
+> REPL 里的斜杠命令 `/tasks` · `/team` · `/inbox` · `/rules` 提供。
 
 ---
 

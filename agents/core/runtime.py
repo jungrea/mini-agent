@@ -34,8 +34,8 @@ BG: BackgroundManager = BackgroundManager()
 BUS: MessageBus = MessageBus()
 
 # s14: 定时调度器。单例但"懒启动"——实例化几乎零成本（不启后台线程），
-# 真正的 start()/stop() 由 REPL 生命周期驱动，保证：
-#   * 单轮 CLI（python -m agents run -p "..."）不会起后台线程
+# 真正的 start()/stop() 由 REPL / WebUI 生命周期驱动，保证：
+#   * 非 REPL 场景（如测试 import、teammate 子线程）不会起后台线程
 #   * 测试 import agents 时不会副作用地拿锁/写 .claude/
 CRON: CronScheduler = CronScheduler()
 

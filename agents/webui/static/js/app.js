@@ -1,21 +1,21 @@
 // app.js —— 应用入口，串联所有模块。
 //
 // 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
-// 的强缓存。修改任何 js 模块后，把 ?v=12 改成新值并同步更新 index.html 里
-// 主入口 app.js?v=12 的值（保持一致），浏览器会重新下载所有模块。
+// 的强缓存。修改任何 js 模块后，把 ?v=14 改成新值并同步更新 index.html 里
+// 主入口 app.js?v=14 的值（保持一致），浏览器会重新下载所有模块。
 
-import { api }            from "./api.js?v=12";
-import { stream }         from "./stream.js?v=12";
-import { ws }             from "./ws.js?v=12";
-import { chat }           from "./chat.js?v=12";
-import { hud }            from "./hud.js?v=12";
-import { notify }         from "./notify.js?v=12";
-import { makeSessions }   from "./sessions.js?v=12";
-import { makeCronPanel }  from "./cron_panel.js?v=12";
-import { initSlash }      from "./slash.js?v=12";
-import { permission }     from "./permission.js?v=12";
-import { phase }          from "./phase.js?v=12";
-import { theme }          from "./theme.js?v=12";
+import { api }            from "./api.js?v=14";
+import { stream }         from "./stream.js?v=14";
+import { ws }             from "./ws.js?v=14";
+import { chat }           from "./chat.js?v=14";
+import { hud }            from "./hud.js?v=14";
+import { notify }         from "./notify.js?v=14";
+import { makeSessions }   from "./sessions.js?v=14";
+import { makeCronPanel }  from "./cron_panel.js?v=14";
+import { initSlash }      from "./slash.js?v=14";
+import { permission }     from "./permission.js?v=14";
+import { phase }          from "./phase.js?v=14";
+import { theme }          from "./theme.js?v=14";
 
 let currentSessionId = null;
 let sessionsUI;

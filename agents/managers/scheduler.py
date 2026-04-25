@@ -85,6 +85,22 @@ JITTER_OFFSET_MAX: int = 4
 #: 漏触发回看最长窗口（小时）
 MISSED_LOOKBACK_HOURS: int = 24
 
+#: auto_run 模式的全局并发上限（整点多任务同时到点时的"闸门"）。
+#:
+#: 背景：_check_tasks 检测到 auto_run=True 的任务到点时，会直接裸 spawn
+#: 一个 daemon 线程跑 run_subagent。没有闸门的话，40 条同整点任务一起
+#: 触发 → 40 个子 agent 同一秒发起 messages.create，极易撞 API rate limit
+#: 或把宿主机 CPU/内存打满。
+#:
+#: 用 BoundedSemaphore 做最小侵入的限流：所有进入 _run_auto_task 的线程
+#: 在开头先拿"名额"，拿不到就在信号量上阻塞排队（FIFO），前面一个做完
+#: release() 就顶上。cron 检测主循环本身不阻塞——它只负责"发起"，排队
+#: 压力只积在被 spawn 出来的 worker 线程里。
+#:
+#: 取值 3 是经验值：既保证 auto_run 任务能并发推进、又稳妥避开多数代理
+#: 网关 / Anthropic API 的短时 RPM 限制。想调节并发就改这里。
+AUTO_RUN_MAX_CONCURRENCY: int = 3
+
 
 # ---------------------------------------------------------------------------
 # CronLock —— 跨进程 PID 文件锁
@@ -247,6 +263,12 @@ class CronScheduler:
         self._listeners: list[CronEventListener] = []
         self._listeners_lock: threading.Lock = threading.Lock()
 
+        #: auto_run 并发闸门：最多 AUTO_RUN_MAX_CONCURRENCY 个子 agent 同时跑
+        #: 使用 BoundedSemaphore（而非 Semaphore），这样任何"多 release 一次"
+        #: 的编码 bug 会立刻抛 ValueError，不会让并发上限被悄悄抬高。
+        self._auto_run_sem: threading.BoundedSemaphore = \
+            threading.BoundedSemaphore(AUTO_RUN_MAX_CONCURRENCY)
+
         # 允许注入自定义 workdir，方便单元测试用 tempdir
         if workdir is not None:
             self._tasks_file: Path = workdir / ".claude" / "scheduled_tasks.json"
@@ -328,7 +350,7 @@ class CronScheduler:
 
     def create(self, cron: str, prompt: str,
                recurring: bool = True, durable: bool = False,
-               auto_run: bool = False) -> str:
+               auto_run: bool = True) -> str:
         """
         创建一个新任务。返回人读的成功消息（同时给 LLM 与用户看）。
 
@@ -598,23 +620,49 @@ class CronScheduler:
 
         通过延迟 import run_subagent，避免 managers 层对 tools 层的静态依赖。
         执行完成后把结果摘要通过 _async_print 输出到终端，让用户可见。
+
+        并发控制：进入前先在 self._auto_run_sem（BoundedSemaphore）上排队，
+        确保同时活跃的 auto_run 子 agent 不超过 AUTO_RUN_MAX_CONCURRENCY。
+        拿不到名额时当前线程会阻塞在 acquire 上（FIFO），待前序任务完成
+        release 后顶上。用 `with` 上下文保证 run_subagent 抛任何异常都会
+        归还名额，不会"漏释放"导致并发配额永久丢失。
+
+        观测性：如果首次 acquire 即刻拿到，耗时 ≈ 0；否则打印一行"queued"
+        让排队情况可见。这里不另发 CRON_AUTO_RUN_QUEUED 事件，避免扩散
+        到 webui/events.py + webui/cron_bridge.py 等多处；终端日志已足够。
         """
-        _async_print(f"[cron] auto_run start: {task['id']}")
-        self._emit({"type": "auto_run_start", "id": task["id"], "prompt": task.get("prompt", "")})
+        # 先尝试非阻塞获取：能立刻拿到就不打印"queued"，噪声最小
+        acquired_immediately = self._auto_run_sem.acquire(blocking=False)
+        if not acquired_immediately:
+            _async_print(
+                f"[cron] auto_run queued: {task['id']} "
+                f"(waiting for a slot, max={AUTO_RUN_MAX_CONCURRENCY})"
+            )
+            # 阻塞等名额；stop_event 在这里没法打断，但 daemon 线程随进程退出
+            self._auto_run_sem.acquire()
+
         try:
-            from ..tools.subagent import run_subagent
-            result = run_subagent(task["prompt"], agent_type="general-purpose")
-            preview = result[:200] + ("…" if len(result) > 200 else "")
-            _async_print(f"[cron] auto_run done: {task['id']} — {preview}")
-            self._emit({
-                "type": "auto_run_done",
-                "id": task["id"],
-                "result": result,
-                "preview": preview,
-            })
-        except Exception as e:
-            _async_print(f"[cron] auto_run error: {task['id']} — {e}")
-            self._emit({"type": "auto_run_error", "id": task["id"], "error": str(e)})
+            _async_print(f"[cron] auto_run start: {task['id']}")
+            self._emit({"type": "auto_run_start", "id": task["id"], "prompt": task.get("prompt", "")})
+            try:
+                from ..tools.subagent import run_subagent
+                result = run_subagent(task["prompt"], agent_type="general-purpose")
+                preview = result[:200] + ("…" if len(result) > 200 else "")
+                _async_print(f"[cron] auto_run done: {task['id']} — {preview}")
+                self._emit({
+                    "type": "auto_run_done",
+                    "id": task["id"],
+                    "result": result,
+                    "preview": preview,
+                })
+            except Exception as e:
+                _async_print(f"[cron] auto_run error: {task['id']} — {e}")
+                self._emit({"type": "auto_run_error", "id": task["id"], "error": str(e)})
+        finally:
+            # 必须 release——无论 run_subagent 成功 / 失败 / 抛异常，都要归还名额。
+            # 用 try/finally 而不是 with self._auto_run_sem: 是因为上面做了
+            # "先 non-blocking 再 blocking"的两段式获取，不适合单 with 表达。
+            self._auto_run_sem.release()
 
     # ---- 持久化 ------------------------------------------------------------
 

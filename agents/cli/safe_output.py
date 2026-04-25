@@ -43,7 +43,7 @@ _CLEAR_LINE: str = "\r\033[2K"
 
 # 当前已注册的提示符（REPL 启动时注册，退出时清空）。
 # 未注册时 = ""，safe_print 就只清行不重画 —— 等价于老行为，避免在
-# 非 REPL 场景（CLI 单轮、teammate 子进程）里凭空打出一行提示符。
+# 非 REPL 场景（WebUI worker、teammate 子线程等）里凭空打出一行提示符。
 _current_prompt: str = ""
 
 
