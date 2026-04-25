@@ -34,7 +34,7 @@
 cd mini-agent
 pip install -r requirements.txt
 cp .env.example .env
-# 编辑 .env，填入 MODEL_ID 以及 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN
+# 编辑 .env，填入 MODEL_ID 以及 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN, 自己做小项目玩建议申请个deepseek api 便宜好用直接改模版填apikey可用
 ```
 
 Python ≥ 3.10（使用了 `Path.is_relative_to`、PEP 604 `X | None` 等新语法）。
