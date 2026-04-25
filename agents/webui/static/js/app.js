@@ -1,26 +1,30 @@
 // app.js —— 应用入口，串联所有模块。
 //
 // 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
-// 的强缓存。修改任何 js 模块后，把 ?v=8 改成新值并同步更新 index.html 里
-// 主入口 app.js?v=8 的值（保持一致），浏览器会重新下载所有模块。
+// 的强缓存。修改任何 js 模块后，把 ?v=12 改成新值并同步更新 index.html 里
+// 主入口 app.js?v=12 的值（保持一致），浏览器会重新下载所有模块。
 
-import { api }            from "./api.js?v=8";
-import { stream }         from "./stream.js?v=8";
-import { ws }             from "./ws.js?v=8";
-import { chat }           from "./chat.js?v=8";
-import { hud }            from "./hud.js?v=8";
-import { notify }         from "./notify.js?v=8";
-import { makeSessions }   from "./sessions.js?v=8";
-import { makeCronPanel }  from "./cron_panel.js?v=8";
-import { initSlash }      from "./slash.js?v=8";
-import { permission }     from "./permission.js?v=8";
-import { phase }          from "./phase.js?v=8";
+import { api }            from "./api.js?v=12";
+import { stream }         from "./stream.js?v=12";
+import { ws }             from "./ws.js?v=12";
+import { chat }           from "./chat.js?v=12";
+import { hud }            from "./hud.js?v=12";
+import { notify }         from "./notify.js?v=12";
+import { makeSessions }   from "./sessions.js?v=12";
+import { makeCronPanel }  from "./cron_panel.js?v=12";
+import { initSlash }      from "./slash.js?v=12";
+import { permission }     from "./permission.js?v=12";
+import { phase }          from "./phase.js?v=12";
+import { theme }          from "./theme.js?v=12";
 
 let currentSessionId = null;
 let sessionsUI;
 let cronUI;
 
 async function init() {
+  // -- 主题切换（先于其它 UI 初始化，避免按钮图标闪烁） --
+  theme.init();
+
   // -- 面板 --
   sessionsUI = makeSessions({
     onSelect: switchSession,
@@ -74,7 +78,7 @@ async function init() {
       } catch (e) { alert(e.message); }
     },
   });
-  permission.init();
+  permission.init({ getSessionId: () => currentSessionId });
 
   // -- 全局事件流 --
   stream.connectGlobal();
@@ -291,7 +295,10 @@ function handleSessionEvent(ev) {
       notify.show({ level: "warn", title: "权限请求", body: data.tool_name });
       break;
     case "permission_resolved":
-      permission.hide();
+      // 只关"对应 ask_id 的弹窗"，避免旧 resolve 事件关掉新弹窗
+      // （worker 一轮里可能连续请求多个权限，下一轮的 ASK 可能在上一轮的
+      //  RESOLVED 之前到达——此时若无脑 hide() 就会误关新弹窗）
+      permission.hide(data && data.ask_id);
       break;
     case "error":
       chat.addError(data.message || "unknown error");

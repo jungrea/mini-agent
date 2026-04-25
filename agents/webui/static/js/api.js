@@ -28,6 +28,8 @@ export const api = {
   postMessage:    (sid, text)    => req("POST",   `/api/sessions/${sid}/messages`, { text }),
   postSlash:      (sid, line)    => req("POST",   `/api/sessions/${sid}/slash`,    { line }),
   cancelSession:  (sid)          => req("POST",   `/api/sessions/${sid}/cancel`),
+  resolvePermission: (sid, askId, decision) =>
+      req("POST", `/api/sessions/${sid}/permission/resolve`, { ask_id: askId, decision }),
   sessionUsage:   (sid)          => req("GET",    `/api/sessions/${sid}/usage`),
 
   slashCommands:  ()             => req("GET",    "/api/slash/commands"),

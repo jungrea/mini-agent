@@ -1,16 +1,24 @@
 /* ============================================================
-   mini-agent WebUI · 暗色玻璃态 · 原生 CSS 无依赖
+   mini-agent WebUI · 主题变量
+   - 默认：暗色玻璃态（原始风格）
+   - [data-theme="light"]：亮色（白底）
+   切换仅改 :root 变量，所有规则都引用 var(--xxx)，不需要改其它选择器。
    ============================================================ */
 
 :root {
+  /* 底色（背景渐变、卡片、输入框） */
   --bg-0: #0b0d12;
   --bg-1: #11141b;
   --bg-2: #181c25;
   --bg-3: #232834;
   --border: #2a2f3a;
+
+  /* 文本层级 */
   --text-0: #e6e7ea;
   --text-1: #b9bdc7;
   --text-2: #7f8594;
+
+  /* 语义色（暗/亮共用；亮色会轻度降饱和以保证可读） */
   --accent: #6366f1;
   --accent-2: #818cf8;
   --allow: #22c55e;
@@ -26,6 +34,63 @@
   --shadow-1: 0 1px 3px rgba(0,0,0,.4);
   --shadow-2: 0 4px 16px rgba(0,0,0,.35);
   --radius: 10px;
+
+  /* 主题相关的"复合"变量：下面 body 背景、半透明叠层会引用它们 */
+  --body-gradient-from: #1b2030;   /* radial-gradient 起点 */
+  --bar-track: var(--bg-3);        /* HUD 进度条底 */
+  --scroll-thumb: var(--bg-3);
+  --scroll-thumb-hover: #3a4050;
+
+  /* 半透明玻璃层（topbar / sidebar / input） */
+  --glass-topbar: rgba(17, 20, 27, .78);
+  --glass-sidebar: rgba(17, 20, 27, .6);
+  --glass-input:  rgba(17, 20, 27, .7);
+  --glass-hud:    rgba(35, 40, 52, .45);
+  --modal-backdrop: rgba(0, 0, 0, .55);
+
+  /* spinner 外圈（暗色下用浅白；亮色下用浅灰） */
+  --spinner-ring: rgba(255,255,255,.15);
+}
+
+/* =========== 亮色主题 =========== */
+:root[data-theme="light"] {
+  --bg-0: #f6f7fb;
+  --bg-1: #ffffff;
+  --bg-2: #f1f3f9;
+  --bg-3: #e4e7ef;
+  --border: #d7dbe4;
+
+  --text-0: #1a1d24;
+  --text-1: #3a414e;
+  --text-2: #6b7280;
+
+  --accent: #4f46e5;
+  --accent-2: #6366f1;
+  --allow: #16a34a;
+  --deny:  #dc2626;
+  --ask:   #d97706;
+  --info:  #2563eb;
+  --success:#16a34a;
+
+  --bar-low:  #16a34a;
+  --bar-mid:  #d97706;
+  --bar-high: #dc2626;
+
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, .06);
+  --shadow-2: 0 8px 24px rgba(15, 23, 42, .10);
+
+  --body-gradient-from: #e9ecf5;
+  --bar-track: #e4e7ef;
+  --scroll-thumb: #cbd0dc;
+  --scroll-thumb-hover: #a9b0c0;
+
+  --glass-topbar:  rgba(255, 255, 255, .78);
+  --glass-sidebar: rgba(255, 255, 255, .65);
+  --glass-input:   rgba(255, 255, 255, .78);
+  --glass-hud:     rgba(241, 243, 249, .75);
+  --modal-backdrop: rgba(15, 23, 42, .32);
+
+  --spinner-ring: rgba(15, 23, 42, .12);
 }
 
 * { box-sizing: border-box; }
@@ -38,11 +103,12 @@ html, body { height: 100%; margin: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft Yahei",
     "Segoe UI", Roboto, sans-serif;
-  background: radial-gradient(1200px 800px at 10% -20%, #1b2030 0%, var(--bg-0) 55%) fixed;
+  background: radial-gradient(1200px 800px at 10% -20%, var(--body-gradient-from) 0%, var(--bg-0) 55%) fixed;
   color: var(--text-0);
   font-size: 14px;
   line-height: 1.55;
   overflow: hidden;
+  transition: background .25s ease, color .25s ease;
 }
 
 button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
@@ -56,7 +122,7 @@ input, textarea, select { font: inherit; color: inherit; }
   align-items: center;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
-  background: rgba(17, 20, 27, .78);
+  background: var(--glass-topbar);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   position: relative;
@@ -71,7 +137,7 @@ input, textarea, select { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 8px;
   font-variant-numeric: tabular-nums;
   color: var(--text-1); font-size: 12px;
-  background: rgba(35,40,52,.45);
+  background: var(--glass-hud);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 4px 14px;
@@ -80,7 +146,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .hud-label { color: var(--text-2); }
 .hud-bar-wrap {
   width: 120px; height: 8px;
-  background: var(--bg-3);
+  background: var(--bar-track);
   border-radius: 4px; overflow: hidden;
 }
 .hud-bar {
@@ -124,7 +190,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ================== Sidebar ================== */
 #sidebar {
   border-right: 1px solid var(--border);
-  background: rgba(17,20,27,.6);
+  background: var(--glass-sidebar);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
@@ -334,7 +400,7 @@ input, textarea, select { font: inherit; color: inherit; }
   position: relative;
   padding: 10px 16px 14px;
   border-top: 1px solid var(--border);
-  background: rgba(17,20,27,.7);
+  background: var(--glass-input);
   backdrop-filter: blur(8px);
 }
 
@@ -353,7 +419,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .phase-banner .spinner {
   width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,.15);
+  border: 2px solid var(--spinner-ring);
   border-top-color: var(--accent-2);
   border-radius: 50%;
   animation: spin .9s linear infinite;
@@ -416,7 +482,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .msg.tool .tool-status .spinner-sm {
   width: 10px; height: 10px;
-  border: 2px solid rgba(255,255,255,.15);
+  border: 2px solid var(--spinner-ring);
   border-top-color: var(--ask);
   border-radius: 50%;
   animation: spin .9s linear infinite;
@@ -538,7 +604,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ================== Modal ================== */
 .modal {
   position: fixed; inset: 0;
-  background: rgba(0,0,0,.55);
+  background: var(--modal-backdrop);
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
   animation: fadeIn .15s ease-out;
@@ -620,5 +686,21 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ================== 滚动条 ================== */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #3a4050; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+/* ================== Theme Toggle Button ================== */
+.theme-toggle {
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.theme-toggle:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}

@@ -119,6 +119,36 @@ def cancel_session(sid: str):
     return sess.request_cancel()
 
 
+class PermissionResolveReq(BaseModel):
+    ask_id: str
+    decision: str   # allow / deny / always
+
+
+@router.post("/sessions/{sid}/permission/resolve")
+def resolve_permission(sid: str, req: PermissionResolveReq):
+    """
+    前端回推权限弹窗决策的 REST 兜底路径（与 WebSocket 同效，幂等）。
+
+    设计原因：WebSocket 在某些场景下可能没握手成功（会话刚建、网络波动等），
+    用 REST 双发可以保证 worker 一定能被唤醒，不会超时按 deny 处理。
+    """
+    sess = get_manager().get(sid)
+    if sess is None:
+        raise HTTPException(404, "session not found")
+    ok = sess.resolve_permission_ask(req.ask_id, req.decision)
+    return {"ok": ok, "ask_id": req.ask_id, "decision": req.decision}
+
+
+@router.get("/sessions/{sid}/pending-asks")
+def list_pending_asks(sid: str):
+    """调试用：列出该会话当前 pending 的权限 ask。"""
+    sess = get_manager().get(sid)
+    if sess is None:
+        raise HTTPException(404, "session not found")
+    with sess._asks_lock:  # noqa: SLF001
+        return {"pending": list(sess._pending_asks.keys())}  # noqa: SLF001
+
+
 @router.post("/sessions/{sid}/slash")
 def post_slash(sid: str, req: SlashReq):
     sess = get_manager().get(sid)

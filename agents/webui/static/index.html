@@ -4,7 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>mini-agent WebUI</title>
-<link rel="stylesheet" href="/static/css/app.css?v=7" />
+<link rel="stylesheet" href="/static/css/app.css?v=8" />
+<script>
+  // 主题首帧防闪烁：在样式应用前把上次选择写到 <html data-theme>。
+  // localStorage 可能被浏览器禁用（隐私模式等），做好容错。
+  try {
+    var t = localStorage.getItem("mini-agent-theme");
+    if (t === "light" || t === "dark") {
+      document.documentElement.setAttribute("data-theme", t);
+    }
+    // 未选过：保留 CSS 默认（暗色），不读系统 prefers-color-scheme——
+    // 避免用户看到随系统变化而困惑；他们可以自己点按钮切。
+  } catch (_) { /* noop */ }
+</script>
 </head>
 <body>
 <!-- ========== Topbar ========== -->
@@ -27,6 +39,7 @@
   </div>
 
   <div class="topbar-right">
+    <button id="themeToggle" class="theme-toggle" title="切换暗/亮主题">🌙</button>
     <select id="modeSelect" class="mode-select" title="权限模式">
       <option value="default">default</option>
       <option value="plan">plan</option>
@@ -114,6 +127,6 @@
 <div id="toasts" class="toasts"></div>
 
 <!-- ========== Scripts (native ES modules, no build step) ========== -->
-<script type="module" src="/static/js/app.js?v=8"></script>
+<script type="module" src="/static/js/app.js?v=12"></script>
 </body>
 </html>
