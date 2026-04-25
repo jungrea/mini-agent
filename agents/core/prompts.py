@@ -102,15 +102,22 @@ def _scan_memory(memory_dir: Path) -> list[dict]:
 
 def _claude_md_chain() -> list[tuple[str, Path]]:
     """
-    返回 CLAUDE.md 查找链，顺序：global → workdir → cwd。
+    返回 CLAUDE.md 查找链，顺序：
+        global              ~/.claude/CLAUDE.md
+        workdir_dot         <WORKDIR>/.claude/CLAUDE.md   ← 对齐 Claude Code 真实目录习惯
+        workdir             <WORKDIR>/CLAUDE.md
+        cwd_dot             <cwd>/.claude/CLAUDE.md
+        cwd                 <cwd>/CLAUDE.md
 
     每项是 (tag, path)，tag 用来在装配时标注来源（便于 LLM 和人类调试）。
-    同一路径重复只保留第一次出现（比如 WORKDIR == cwd 时 cwd 会被去重）。
+    同一路径重复只保留第一次出现（比如 WORKDIR == cwd 时 cwd 那组会被去重）。
     """
     candidates: list[tuple[str, Path]] = [
-        ("global",  Path.home() / ".claude" / "CLAUDE.md"),
-        ("workdir", WORKDIR / "CLAUDE.md"),
-        ("cwd",     Path.cwd() / "CLAUDE.md"),
+        ("global",      Path.home() / ".claude" / "CLAUDE.md"),
+        ("workdir_dot", WORKDIR / ".claude" / "CLAUDE.md"),
+        ("workdir",     WORKDIR / "CLAUDE.md"),
+        ("cwd_dot",     Path.cwd() / ".claude" / "CLAUDE.md"),
+        ("cwd",         Path.cwd() / "CLAUDE.md"),
     ]
     seen: set[Path] = set()
     out: list[tuple[str, Path]] = []
