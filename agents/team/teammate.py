@@ -33,6 +33,7 @@ from ..core.config import (
     client,
 )
 from ..core.prompts import build_identity
+from ..core.normalize import normalize_messages
 from ..permissions.manager import PermissionManager
 from ..tools.bash import run_bash
 from ..tools.fs import run_edit, run_read, run_write
@@ -198,7 +199,7 @@ class TeammateManager:
                     response = client.messages.create(
                         model=MODEL,
                         system=sys_prompt,
-                        messages=messages,
+                        messages=normalize_messages(messages),
                         tools=tools,
                         max_tokens=8000,
                     )

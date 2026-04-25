@@ -30,18 +30,25 @@ core/loop —— s01 主智能体循环（集成 s07 权限三分支 + s08 hook 
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from typing import Any, Callable, Iterator, Optional
 
 from ..managers.compression import auto_compact, estimate_tokens, microcompact
 from ..permissions.manager import PermissionManager
 from .config import MODEL, TOKEN_THRESHOLD, client
-from .dispatch import TOOL_HANDLERS, TOOLS
+from .dispatch import PARALLEL_SAFE, TOOL_HANDLERS, TOOLS
 from .hooks import HookManager
+from .normalize import normalize_messages
 from .prompts import BUILDER
 from .reminders import build_system_reminder
 from .runtime import BG, BUS, CRON, TODO
 from .usage import USAGE
+
+
+#: 并行桶的线程数上限。web_search/web_fetch 是主要受益方；值取太大会撞 API
+#: 速率限制，取太小又浪费。3 是"两三个并行网络请求"的常见峰值。
+PARALLEL_MAX_WORKERS: int = 3
 
 
 #: 可选的进度回调签名：progress(event_type, payload_dict)。
@@ -106,6 +113,83 @@ def _spinning(label: str) -> Iterator[None]:
         return
     with spinning(label):
         yield
+
+
+def _flush_admitted_to_results(admitted: list[dict],
+                               outputs: dict[str, tuple[str, int, bool]],
+                               results: list,
+                               hooks: HookManager | None,
+                               progress: Optional[ProgressCallback],
+                               used_todo_ref: bool | None) -> bool:
+    """
+    工具执行 Phase D：按 admitted 的原顺序回放结果，产出 tool_result。
+
+    每个 admitted 项的归宿：
+        * skip=True            —— Phase A 已经定性失败；直接写 skip_result
+        * skip=False 且无 output —— 异常路径（例如 serial 桶被 cancel 中断）；不写，交给上层补 cancel
+        * skip=False 且有 output —— 正常跑完：发 tool_end、跑 PostHook、拼 tool_result
+
+    返回：更新后的 used_todo 标志（是否本轮出现过 TodoWrite 的有效调用）。
+    """
+    used_todo = bool(used_todo_ref)
+    for item in admitted:
+        block = item["block"]
+
+        if item["skip"]:
+            # Phase A 已经产生终态文本
+            results.append({"type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": str(item["skip_result"])})
+            continue
+
+        if block.id not in outputs:
+            # 还没跑到（例如 serial 桶中途取消）——留给上层补 cancel_result
+            continue
+
+        output, duration_ms, error_flag = outputs[block.id]
+        tool_input = item["tool_input"]
+        pre_notes = item.get("pre_notes", "")
+
+        # progress: tool_end（并行桶也在这里发，保证和 PostHook / tool_result 序一致）
+        _safe_call(progress, "tool_end", {
+            "id": block.id, "name": block.name,
+            "duration_ms": duration_ms,
+            "output_preview": _safe_preview(output),
+            "output": output,
+            "error": error_flag,
+        })
+
+        # PostToolUse hook
+        post_notes = ""
+        if hooks is not None:
+            post = hooks.run_hooks("PostToolUse", {
+                "tool_name": block.name,
+                "tool_input": {k: v for k, v in tool_input.items()
+                               if k != "tool_use_id"},
+                "tool_output": output,
+            })
+            notes = list(post["messages"])
+            if post["blocked"] and post["block_reason"]:
+                notes.append(post["block_reason"])
+            if notes:
+                post_notes = "".join(f"\n[hook note]: {m}" for m in notes)
+
+        # 终端单行摘要
+        full = pre_notes + output + post_notes
+        first = full.splitlines()[0] if full else ""
+        preview = first[:200]
+        if len(first) > 200 or "\n" in full:
+            preview += "…"
+        print(f"> {block.name}: {preview}")
+
+        results.append({"type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": full})
+
+        if block.name == "TodoWrite":
+            used_todo = True
+
+    return used_todo
 
 
 def agent_loop(messages: list,
@@ -222,10 +306,14 @@ def agent_loop(messages: list,
         system_text = BUILDER.build(mode=perms.mode if perms else None)
         _safe_call(progress, "llm_start", {})
         with _spinning("思考中…"):
+            # normalize_messages 是出门安检：保证 messages 结构合法
+            # （tool_use ↔ tool_result 配对、tool_result 在 user 内容前部、
+            #  无空 content、剥内部字段）。源头 bug 仍应在 loop 自己里修；
+            #  这里只是把"漏网"的小错降级为"打日志 + 静默修复"，避免直接 400。
             response = client.messages.create(
                 model=MODEL,
                 system=system_text,
-                messages=messages,
+                messages=normalize_messages(messages),
                 tools=TOOLS,
                 max_tokens=8000,
             )
@@ -254,7 +342,7 @@ def agent_loop(messages: list,
                             break
                 except Exception:
                     pass
-                hooks.run_hooks("RoundEnd", {
+                hooks.run_hooks("RoundEnd", context={
                     "tool_name": "",
                     "tool_input": {
                         "stop_reason": response.stop_reason,
@@ -264,86 +352,87 @@ def agent_loop(messages: list,
             # ========= RoundEnd hook 结束 =========
             return
 
-        # --- 工具执行 ---------------------------------------------------
+        # --- 工具执行（两阶段调度：准入串行 + 执行分桶并行/串行）-----------
+        #
+        # 设计要点：
+        #   * Phase A（串行）：权限检查 + ask_user + PreToolUse hook。
+        #     这些步骤含用户交互（权限弹窗）和顺序敏感操作（hook 改 input），
+        #     必须按 response.content 原顺序一个一个做。
+        #   * Phase B（分桶）：准入通过的任务按 PARALLEL_SAFE 分到并行/串行桶。
+        #     PreToolUse 改过 input 的任务**强制回落到串行**——因为 hook 可能
+        #     依赖执行顺序（例如前一个 hook 改 env 影响下一个）。
+        #   * Phase C（执行）：并行桶用 ThreadPoolExecutor；串行桶保持原逻辑。
+        #   * Phase D（收口）：按 response.content 原顺序发 progress / PostHook /
+        #     拼 tool_result，保证 UI 与日志时序可读。
         results = []
         used_todo = False
         manual_compress = False
         compact_focus = None
 
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
+        # 同一轮的所有 tool_use 块（用来"cancel 时补齐未执行的 tool_result"）
+        all_tool_uses = [b for b in response.content if b.type == "tool_use"]
 
-            # 每次处理一个 tool_use 前，给外部早停的机会。
-            # 此时如果 cancel，已经 LLM 返回的 tool_use 都当作未执行；但为了
-            # messages 结构合法（tool_use 必须配 tool_result），我们给每个未执行
-            # 的 tool_use 补一个 "Cancelled by user" tool_result，然后 append 到
-            # history 再 return。
+        # Phase A 的产物：以 block.id 为键的准入结果
+        # 每项是 dict:
+        #   {"block": block, "tool_input": dict, "pre_notes": str,
+        #    "skip": bool,     # True 表示本 block 已经在 Phase A 里定性失败（deny/ask-deny/hook-blocked）
+        #    "skip_result": str,   # skip 时要写回的 tool_result 文本
+        #   }
+        # 用 list 保序（按 response.content 原序），便于 Phase D 回放。
+        admitted: list[dict] = []
+
+        def _append_cancel_results() -> None:
+            """cancel 早停时补齐所有尚未产出 tool_result 的 tool_use。"""
+            done_ids = {r.get("tool_use_id") for r in results}
+            for b in all_tool_uses:
+                if b.id not in done_ids:
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": b.id,
+                        "content": "Cancelled by user before tool execution.",
+                    })
+
+        # ---------- Phase A：串行准入（权限 + ask + PreHook） ----------
+        for block in all_tool_uses:
             if _is_cancelled(cancel_check):
                 _safe_call(progress, "cancelled", {"stage": "pre_tool", "tool": block.name})
-                # 把当前这一轮响应里**所有** tool_use 全部补成 cancelled tool_result
-                for b in response.content:
-                    if b.type == "tool_use":
-                        already_done = any(r.get("tool_use_id") == b.id for r in results)
-                        if not already_done:
-                            results.append({
-                                "type": "tool_result",
-                                "tool_use_id": b.id,
-                                "content": "Cancelled by user before tool execution.",
-                            })
+                _append_cancel_results()
                 messages.append({"role": "user", "content": results})
                 return
 
-            # 记录是否本轮有 compress 请求（需要延后到 results 处理完再做）
+            # 记录是否本轮有 compress 请求（延后处理）
             if block.name == "compress":
                 manual_compress = True
                 compact_focus = (block.input or {}).get("focus")
 
-            # ========= 权限检查三分支（s07 补齐）=========
+            # ---- 权限检查 ----
             if perms is not None:
                 decision = perms.check(block.name, block.input or {})
-
                 if decision["behavior"] == "deny":
-                    output = f"Permission denied: {decision['reason']}"
+                    msg = f"Permission denied: {decision['reason']}"
                     print(f"  [DENIED] {block.name}: {decision['reason']}")
                     _safe_call(progress, "tool_denied", {
                         "id": block.id, "name": block.name,
                         "reason": decision["reason"], "source": "permission",
                     })
-                    results.append({"type": "tool_result",
-                                    "tool_use_id": block.id,
-                                    "content": str(output)})
+                    admitted.append({"block": block, "skip": True, "skip_result": msg})
                     continue
-
                 if decision["behavior"] == "ask":
                     if not perms.ask_user(block.name, block.input or {}):
-                        output = f"Permission denied by user for {block.name}"
+                        msg = f"Permission denied by user for {block.name}"
                         print(f"  [USER DENIED] {block.name}")
                         _safe_call(progress, "tool_denied", {
                             "id": block.id, "name": block.name,
                             "reason": "denied by user", "source": "user",
                         })
-                        results.append({"type": "tool_result",
-                                        "tool_use_id": block.id,
-                                        "content": str(output)})
+                        admitted.append({"block": block, "skip": True, "skip_result": msg})
                         continue
-                    # 用户点头 → 继续走下面的 allow 分支
-                # allow 分支：fall through 到下面统一的 handler 分派
-            # ========= 权限检查结束 =========
 
-            # --- 正常工具分派 ---
-            handler = TOOL_HANDLERS.get(block.name)
-            # 把初始化提到 try 之外：即使 handler 抛异常，PostToolUse 仍能拿到
-            # 可用的 tool_input / pre_notes（避免 NameError）
+            # ---- PreToolUse hook（权限通过才跑）----
             tool_input = dict(block.input or {})
             tool_input["tool_use_id"] = block.id
             pre_notes = ""
-
-            # ========= PreToolUse hook（s08 融合点 1）=========
-            # 权限已 allow，才触发外部 hook。PreToolUse 有三种归宿：
-            #   * blocked        → 跳过 handler，block_reason 作为 tool_result 回给 LLM
-            #   * updated_input  → 改写 tool_input（典型用途：路径规范化、参数脱敏）
-            #   * messages       → 在 handler 输出前面拼一段 [hook] 注记
+            input_was_updated = False
             if hooks is not None:
                 pre = hooks.run_hooks("PreToolUse", {
                     "tool_name": block.name,
@@ -358,81 +447,104 @@ def agent_loop(messages: list,
                         "reason": pre.get("block_reason") or "hook blocked",
                         "source": "hook",
                     })
-                    results.append({"type": "tool_result",
-                                    "tool_use_id": block.id,
-                                    "content": msg})
+                    admitted.append({"block": block, "skip": True, "skip_result": msg})
                     continue
                 if pre.get("updated_input"):
-                    # 保留 tool_use_id，其余字段用 hook 返回的 updatedInput 覆盖
                     new_input = dict(pre["updated_input"])
                     new_input["tool_use_id"] = block.id
                     tool_input = new_input
+                    input_was_updated = True
                 if pre["messages"]:
                     pre_notes = "".join(f"[hook]: {m}\n" for m in pre["messages"])
-            # ========= PreToolUse hook 结束 =========
 
-            _tool_t0 = _time_now()
-            _safe_call(progress, "tool_start", {
-                "id": block.id, "name": block.name,
-                "input": {k: v for k, v in tool_input.items() if k != "tool_use_id"},
+            admitted.append({
+                "block": block, "skip": False,
+                "tool_input": tool_input, "pre_notes": pre_notes,
+                "input_was_updated": input_was_updated,
             })
-            _tool_error = False
+
+        # ---------- Phase B：分桶 ----------
+        # 并行条件：准入通过 + 在 PARALLEL_SAFE 白名单里 + PreHook 没改过 input
+        parallel_items: list[dict] = []
+        serial_items: list[dict] = []
+        for item in admitted:
+            if item["skip"]:
+                continue
+            b = item["block"]
+            if b.name in PARALLEL_SAFE and not item["input_was_updated"]:
+                parallel_items.append(item)
+            else:
+                serial_items.append(item)
+
+        # ---------- Phase C：执行 ----------
+        # outputs 以 block.id 为键存 (output_str, duration_ms, error_flag)；
+        # 方便 Phase D 按原顺序回放 progress / PostHook / tool_result。
+        outputs: dict[str, tuple[str, int, bool]] = {}
+
+        def _invoke_handler(item: dict) -> tuple[str, int, bool]:
+            """跑 handler，吞异常；返回 (output, duration_ms, error_flag)。"""
+            b = item["block"]
+            handler = TOOL_HANDLERS.get(b.name)
+            t0 = _time_now()
+            error = False
             try:
-                # spinner 让用户感知到"正在执行工具 xxx"；
-                # 工具内部若有自己的输出（write/flush），会因 spinner 行用 \r
-                # 覆写而产生短暂错位——可接受：停 spinner 后 \033[2K 会清掉残影。
-                with _spinning(f"执行 {block.name}…"):
-                    output = handler(**tool_input) if handler else f"Unknown tool: {block.name}"
+                output = handler(**item["tool_input"]) if handler \
+                    else f"Unknown tool: {b.name}"
             except Exception as e:
-                # 不让工具异常中断整个循环；把错误作为 tool_result 回传 LLM
                 output = f"Error: {e}"
-                _tool_error = True
-            _tool_ms = int((_time_now() - _tool_t0) * 1000)
-            _safe_call(progress, "tool_end", {
-                "id": block.id, "name": block.name,
-                "duration_ms": _tool_ms,
-                "output_preview": _safe_preview(output),
-                # 携带完整 output（pre/post hook 的注记在 progress 路径里不体现，
-                # 那些注记只走 tool_result 回给 LLM 用，不影响前端显示真实输出）。
-                "output": str(output),
-                "error": _tool_error,
-            })
+                error = True
+            duration_ms = int((_time_now() - t0) * 1000)
+            return str(output), duration_ms, error
 
-            # ========= PostToolUse hook（s08 融合点 2）=========
-            # 执行完（或异常）之后，让外部 hook 有机会审计/lint/附加信息。
-            # PostToolUse 的 block 语义含义较弱（结果已产生）——这里仍尊重
-            # block_reason，把它作为补充信息注入，而不是删掉已有 output。
-            post_notes = ""
-            if hooks is not None:
-                post = hooks.run_hooks("PostToolUse", {
-                    "tool_name": block.name,
-                    "tool_input": {k: v for k, v in tool_input.items()
-                                   if k != "tool_use_id"},
-                    "tool_output": str(output),
+        # 并行桶：线程池内并发；progress 的 tool_start 放在提交时打，tool_end
+        # 放在 Phase D（保证与 PostHook/tool_result 顺序匹配）。
+        if parallel_items:
+            for item in parallel_items:
+                b = item["block"]
+                _safe_call(progress, "tool_start", {
+                    "id": b.id, "name": b.name,
+                    "input": {k: v for k, v in item["tool_input"].items()
+                              if k != "tool_use_id"},
                 })
-                notes = list(post["messages"])
-                if post["blocked"] and post["block_reason"]:
-                    notes.append(post["block_reason"])
-                if notes:
-                    post_notes = "".join(f"\n[hook note]: {m}" for m in notes)
-            # ========= PostToolUse hook 结束 =========
+            with ThreadPoolExecutor(
+                max_workers=min(PARALLEL_MAX_WORKERS, len(parallel_items)),
+                thread_name_prefix="tool-par",
+            ) as ex:
+                future_map = {ex.submit(_invoke_handler, it): it
+                              for it in parallel_items}
+                # 按完成顺序收集即可——outputs 按 id 存，Phase D 会按原序回放
+                for fut in future_map:
+                    item = future_map[fut]
+                    try:
+                        outputs[item["block"].id] = fut.result()
+                    except Exception as e:   # 防御式：_invoke_handler 自己已吞异常，这里基本不会进
+                        outputs[item["block"].id] = (f"Error: {e}", 0, True)
 
-            # 终端只展示首行摘要，遇到换行或过长就省略——避免多行工具输出
-            # （web_search 多条结果、bash/fs 大段文本）把屏幕撑成一大片。
-            # 完整输出照常以 tool_result 回传给 LLM，不受此处裁剪影响。
-            _full = pre_notes + str(output) + post_notes
-            _first = _full.splitlines()[0] if _full else ""
-            _preview = _first[:200]
-            # 有省略的情况：首行被砍长、或后面还有其它行
-            if len(_first) > 200 or "\n" in _full:
-                _preview += "…"
-            print(f"> {block.name}: {_preview}")
-            results.append({"type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": _full})
+        # 串行桶：保持原行为——带 spinner、逐个跑
+        for item in serial_items:
+            if _is_cancelled(cancel_check):
+                _safe_call(progress, "cancelled",
+                           {"stage": "pre_tool", "tool": item["block"].name})
+                # 把本桶剩余 + 并行桶未完成（理论上并行桶此刻都已完成）补成 cancelled
+                # 先把已完成的收进 results，再补 cancel
+                _flush_admitted_to_results(admitted, outputs, results,
+                                           hooks, progress, used_todo_ref=None)
+                _append_cancel_results()
+                messages.append({"role": "user", "content": results})
+                return
+            b = item["block"]
+            _safe_call(progress, "tool_start", {
+                "id": b.id, "name": b.name,
+                "input": {k: v for k, v in item["tool_input"].items()
+                          if k != "tool_use_id"},
+            })
+            with _spinning(f"执行 {b.name}…"):
+                outputs[b.id] = _invoke_handler(item)
 
-            if block.name == "TodoWrite":
-                used_todo = True
+        # ---------- Phase D：按原顺序收口（progress.tool_end + PostHook + tool_result） ----------
+        used_todo = _flush_admitted_to_results(
+            admitted, outputs, results, hooks, progress, used_todo_ref=used_todo,
+        )
 
         # --- s03: TodoWrite nag 计数器 ---------------------------------
         # 只有"todo 工作流真在进行中"（TODO 里有 open items）且"连续 3 轮没调 TodoWrite"
@@ -440,10 +552,18 @@ def agent_loop(messages: list,
         rounds_without_todo = 0 if used_todo else rounds_without_todo + 1
         if TODO.has_open_items() and rounds_without_todo >= 3:
             # 走 <system-reminder>（对齐 s10 / Claude Code 真实做法），
-            # 由 reminders 模块统一装配；插到 results 最前面确保模型先看到。
+            # 由 reminders 模块统一装配。
+            #
+            # 【重要】reminder 必须 append 到 results **末尾**，不能 insert(0)。
+            # Anthropic API 要求：当上一条 assistant 含 tool_use 时，紧接的 user
+            # 消息里 tool_result 的位置决定了 tool_use ↔ tool_result 的配对顺序；
+            # 若把 text 塞到前面（曾经的实现），API 会把结构判定为"tool_use 之后
+            # 没有紧跟 tool_result"而返回 400（messages.N: `tool_use` ids were
+            # found without `tool_result` blocks immediately after）。
+            # LLM 对尾部 text 块的可见性与开头一致，不影响提醒效果。
             reminder_block = build_system_reminder(todo_nag=True)
             if reminder_block is not None:
-                results.insert(0, reminder_block)
+                results.append(reminder_block)
 
         messages.append({"role": "user", "content": results})
 

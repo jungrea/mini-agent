@@ -186,6 +186,22 @@ class PermissionManager:
             if self._matches(rule, tool_name, tool_input):
                 return {"behavior": "deny", "reason": f"Blocked by deny rule: {rule}"}
 
+        # --- Step 1.5: parallel-safe 白名单短路 --------------------------
+        # 把"能在同一轮里并行执行的工具"与"对用户不敏感、可免审批"绑成同一语义：
+        # 一个工具一旦进入 PARALLEL_SAFE，就自动免 ask（哪怕在 default 模式下）。
+        # 之所以放在 mode 判定之前：plan 模式虽然写工具会 deny，但 PARALLEL_SAFE
+        # 里都是纯读工具，plan 模式本也会放行，行为一致；放前面能少走一次规则匹配。
+        # 准入门槛见 dispatch.PARALLEL_SAFE 的注释——扩名单要慎重。
+        # 延迟 import 避免循环依赖（dispatch → permissions 的潜在链）。
+        try:
+            from ..core.dispatch import PARALLEL_SAFE
+            if tool_name in PARALLEL_SAFE:
+                self.consecutive_denials = 0
+                return {"behavior": "allow",
+                        "reason": f"Parallel-safe tool ({tool_name}); auto-approved"}
+        except ImportError:
+            pass   # dispatch 不可用时回退到原规则链，不影响兼容性
+
         # --- Step 2: mode 判定 ------------------------------------------
         if self.mode == "plan":
             # plan 模式：写工具一律拒绝；其它都放行（用于"先规划不动手"场景）

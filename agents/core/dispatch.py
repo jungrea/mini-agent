@@ -26,6 +26,36 @@ from .runtime import BG, BUS, CRON, SKILLS, TASK_MGR, TEAM, TODO
 #
 # 每个 handler 接收 **kw，即 LLM 侧提交的 tool_input 展开；
 # 额外的 `tool_use_id` 由 agent_loop 在分派前塞进去，供 persisted_output 使用。
+
+# -------------------------------------------------------------------------
+# PARALLEL_SAFE：允许"在同一轮 agent_loop 里并行执行"的工具白名单
+# -------------------------------------------------------------------------
+# 准入三要素（同时满足才入选）：
+#   1. 纯读 / 无副作用：不写磁盘、不改内存单例、不改进程态
+#   2. 幂等：多次并发调用结果与串行一致
+#   3. 对用户不敏感到"即使在 default 模式下免审批也可接受"（因此在
+#      PermissionManager.check() 里会对该集合短路返回 allow）
+#
+# 当前保守名单（只放"web 与代码检索"这类最明显能并发提速的）：
+#   - web_fetch / web_search：远程 IO，并行红利最大
+#   - read_file：纯读磁盘
+#   - search_content：ripgrep 子进程，只读
+#
+# 明确**不放进来**的（及原因）：
+#   - bash_readonly  : 虽只读但能读任意敏感文件，暂留给权限层管控
+#   - TodoWrite / compress / task_* / cron_* : 改内存单例
+#   - write_file / edit_file / bash : 写副作用
+#   - send_message / broadcast / spawn_teammate : 改 MessageBus/Team 态
+#
+# 扩名单原则：先观察一段时间 [normalize] 日志与实际体验，再逐个加入。
+PARALLEL_SAFE: frozenset[str] = frozenset({
+    "read_file",
+    "search_content",
+    "web_fetch",
+    "web_search",
+})
+
+
 TOOL_HANDLERS: dict = {
     # --- 基础 I/O（s02） ---
     "bash":             lambda **kw: run_bash(kw["command"], kw.get("tool_use_id", "")),

@@ -14,6 +14,7 @@ tools/subagent —— s04 子智能体。
 """
 
 from ..core.config import MODEL, client
+from ..core.normalize import normalize_messages
 from .bash import run_bash
 from .fs import run_edit, run_read, run_write
 
@@ -103,7 +104,7 @@ def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
     for _ in range(30):
         resp = client.messages.create(
             model=MODEL,
-            messages=sub_msgs,
+            messages=normalize_messages(sub_msgs),
             tools=sub_tools,
             max_tokens=8000,
         )
