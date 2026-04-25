@@ -1,21 +1,21 @@
 // app.js —— 应用入口，串联所有模块。
 //
 // 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
-// 的强缓存。修改任何 js 模块后，把 ?v=14 改成新值并同步更新 index.html 里
-// 主入口 app.js?v=14 的值（保持一致），浏览器会重新下载所有模块。
+// 的强缓存。修改任何 js 模块后，把 ?v=17 改成新值并同步更新 index.html 里
+// 主入口 app.js?v=17 的值（保持一致），浏览器会重新下载所有模块。
 
-import { api }            from "./api.js?v=14";
-import { stream }         from "./stream.js?v=14";
-import { ws }             from "./ws.js?v=14";
-import { chat }           from "./chat.js?v=14";
-import { hud }            from "./hud.js?v=14";
-import { notify }         from "./notify.js?v=14";
-import { makeSessions }   from "./sessions.js?v=14";
-import { makeCronPanel }  from "./cron_panel.js?v=14";
-import { initSlash }      from "./slash.js?v=14";
-import { permission }     from "./permission.js?v=14";
-import { phase }          from "./phase.js?v=14";
-import { theme }          from "./theme.js?v=14";
+import { api }            from "./api.js?v=17";
+import { stream }         from "./stream.js?v=17";
+import { ws }             from "./ws.js?v=17";
+import { chat }           from "./chat.js?v=18";
+import { hud }            from "./hud.js?v=17";
+import { notify }         from "./notify.js?v=17";
+import { makeSessions }   from "./sessions.js?v=17";
+import { makeCronPanel }  from "./cron_panel.js?v=17";
+import { initSlash }      from "./slash.js?v=17";
+import { permission }     from "./permission.js?v=17";
+import { phase }          from "./phase.js?v=17";
+import { theme }          from "./theme.js?v=17";
 
 let currentSessionId = null;
 let sessionsUI;
@@ -134,6 +134,7 @@ async function switchSession(sid) {
     const detail = await api.getSession(sid);
     document.getElementById("currentTitle").textContent = detail.title;
     setModeUI(detail.mode || "default");
+    setWorkdirTag(detail.workdir, detail.workdir_default);
     chat.renderHistory(detail.history);
     if (detail.usage) hud.update(detail.usage);
     setInputState(detail.state || "idle");
@@ -152,15 +153,299 @@ async function switchSession(sid) {
   ws.connect(sid);
 }
 
+// ---------------- 顶部"当前会话工作区"小标签 ----------------
+
+const RECENT_WORKDIR_KEY = "mini-agent-recent-workdirs";
+const RECENT_WORKDIR_MAX = 5;
+
+function loadRecentWorkdirs() {
+  try {
+    const raw = localStorage.getItem(RECENT_WORKDIR_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter(s => typeof s === "string") : [];
+  } catch (_) { return []; }
+}
+
+function pushRecentWorkdir(path) {
+  if (!path) return;
+  const list = loadRecentWorkdirs().filter(p => p !== path);
+  list.unshift(path);
+  try {
+    localStorage.setItem(RECENT_WORKDIR_KEY, JSON.stringify(list.slice(0, RECENT_WORKDIR_MAX)));
+  } catch (_) { /* 配额满 / 隐私模式：静默 */ }
+}
+
+function setWorkdirTag(workdir, workdirDefault) {
+  const tag = document.getElementById("currentWorkdir");
+  if (!tag) return;
+  if (workdir) {
+    // 显示尾部更短的形式：~/xxx 或最后两段
+    const display = shortenPath(workdir);
+    tag.textContent = `📁 ${display}`;
+    tag.title = `工作区: ${workdir}\n（默认: ${workdirDefault || "?"}）`;
+    tag.classList.remove("is-hidden");
+    tag.style.display = "";
+    tag.classList.add("is-custom");
+  } else {
+    // 默认（项目根）不展示标签——视觉更清爽，避免每个会话顶部都挂一个 badge
+    tag.classList.add("is-hidden");
+    tag.style.display = "none";
+    tag.classList.remove("is-custom");
+    tag.textContent = "";
+    tag.title = "";
+  }
+}
+
+function shortenPath(p) {
+  if (!p) return "";
+  // ~ 替换 home 前缀（前端拿不到 $HOME，靠服务端返回的绝对路径做尾部截断）
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length <= 2) return p;
+  return ".../" + parts.slice(-2).join("/");
+}
+
+// ---------------- 新建会话弹窗 ----------------
+
+function openNewSessionModal() {
+  const modal = document.getElementById("newSessionModal");
+  const wd    = document.getElementById("newSessionWorkdir");
+  const mode  = document.getElementById("newSessionMode");
+  const err   = document.getElementById("newSessionError");
+  const recentEl = document.getElementById("newSessionRecent");
+
+  if (!modal) return;
+  // 默认填入顶部 modeSelect 当前值（用户手感连贯）
+  mode.value = document.getElementById("modeSelect").value || "default";
+  wd.value = "";
+  err.classList.add("is-hidden"); err.style.display = "none"; err.textContent = "";
+
+  // 渲染"最近用过的工作区"建议列表
+  const recents = loadRecentWorkdirs();
+  if (recents.length > 0) {
+    recentEl.innerHTML = recents.map(p =>
+      `<li data-path="${escapeAttr(p)}">${escapeHTML(p)}</li>`
+    ).join("");
+    recentEl.classList.remove("is-hidden");
+    recentEl.style.display = "";
+    // 点击项 → 填进输入框
+    recentEl.querySelectorAll("li").forEach(li => {
+      li.addEventListener("click", () => {
+        wd.value = li.dataset.path;
+        wd.focus();
+      });
+    });
+  } else {
+    recentEl.classList.add("is-hidden");
+    recentEl.style.display = "none";
+    recentEl.innerHTML = "";
+  }
+
+  modal.classList.remove("is-hidden");
+  modal.style.display = "";
+  setTimeout(() => wd.focus(), 30);
+
+  // 一次性 keydown：Esc 关 / Enter 确认（避免反复绑定泄漏）
+  function onKey(ev) {
+    if (ev.key === "Escape") { closeNewSessionModal(); cleanup(); }
+    else if (ev.key === "Enter" && document.activeElement !== mode) {
+      ev.preventDefault();
+      submitNewSession();
+    }
+  }
+  function cleanup() { document.removeEventListener("keydown", onKey); }
+  document.addEventListener("keydown", onKey);
+
+  document.getElementById("newSessionCancel").onclick = () => { closeNewSessionModal(); cleanup(); };
+  document.getElementById("newSessionConfirm").onclick = () => submitNewSession(cleanup);
+
+  // "📂 浏览"按钮：弹二级目录浏览模态框，选中后回填到工作区输入框
+  document.getElementById("newSessionBrowse").onclick = () => {
+    openFolderPicker(wd.value, (picked) => {
+      if (picked) wd.value = picked;
+    });
+  };
+}
+
+function closeNewSessionModal() {
+  const modal = document.getElementById("newSessionModal");
+  if (!modal) return;
+  modal.classList.add("is-hidden");
+  modal.style.display = "none";
+}
+
+async function submitNewSession(cleanup) {
+  const wd   = document.getElementById("newSessionWorkdir").value.trim();
+  const mode = document.getElementById("newSessionMode").value || "default";
+  const errEl = document.getElementById("newSessionError");
+  errEl.classList.add("is-hidden"); errEl.style.display = "none"; errEl.textContent = "";
+
+  try {
+    const meta = await api.createSession("", mode, wd || null);
+    if (wd) pushRecentWorkdir(wd);
+    closeNewSessionModal();
+    if (cleanup) cleanup();
+    await sessionsUI.refresh();
+    await switchSession(meta.id);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove("is-hidden");
+    errEl.style.display = "";
+  }
+}
+
+function escapeHTML(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function escapeAttr(s) { return escapeHTML(s); }
+
 async function onNewSession() {
+  // 用户主动点"+ 新建"——弹弹窗让他选工作区+模式
+  openNewSessionModal();
+}
+
+async function quickCreateDefaultSession() {
+  // 用于"用户已经输入消息但还没会话"等无人值守路径——静默用默认配置创建，
+  // 避免弹窗打断用户的输入流。
   const mode = document.getElementById("modeSelect").value || "default";
   try {
-    const meta = await api.createSession("", mode);
+    const meta = await api.createSession("", mode, null);
     await sessionsUI.refresh();
     await switchSession(meta.id);
   } catch (e) {
     notify.show({ level: "error", title: "新建失败", body: e.message });
   }
+}
+
+// ---------------- 目录浏览模态框（"📂 浏览"按钮） ----------------
+//
+// 浏览器层面没有"原生 native folder picker that returns absolute path"
+// （webkitdirectory 只给文件名、showDirectoryPicker 只给 handle，都拿不到
+// 服务端绝对路径）。所以这里的"原生感"是靠后端 /api/fs/list 列服务端
+// 目录树 + 前端弹自定义模态框双击穿层级实现的——这是 VS Code / Jupyter
+// 等本地化工具的标准做法。
+//
+// 入口：openFolderPicker(initialPath, onPick)
+//   * initialPath 为空 → 后端 /api/fs/home 拿用户家目录作起点
+//   * onPick(pathOrNull) → 用户点"使用此目录" 回传字符串；取消则回传 null
+//
+// UI 状态都局部 closure 持有，不用全局变量，避免和其它地方串。
+
+async function openFolderPicker(initialPath, onPick) {
+  const modal      = document.getElementById("folderPickerModal");
+  const pathInput  = document.getElementById("folderPickerPath");
+  const goBtn      = document.getElementById("folderPickerGo");
+  const upBtn      = document.getElementById("folderPickerUp");
+  const homeBtn    = document.getElementById("folderPickerHome");
+  const showHidden = document.getElementById("folderPickerShowHidden");
+  const statusEl   = document.getElementById("folderPickerStatus");
+  const listEl     = document.getElementById("folderPickerList");
+  const errEl      = document.getElementById("folderPickerError");
+  const cancelBtn  = document.getElementById("folderPickerCancel");
+  const confirmBtn = document.getElementById("folderPickerConfirm");
+
+  if (!modal) { onPick && onPick(null); return; }
+
+  // 当前正在查看的绝对路径
+  let currentPath = "";
+  let parentPath = null;
+
+  function setError(msg) {
+    if (msg) {
+      errEl.textContent = msg;
+      errEl.classList.remove("is-hidden");
+      errEl.style.display = "";
+    } else {
+      errEl.classList.add("is-hidden");
+      errEl.style.display = "none";
+      errEl.textContent = "";
+    }
+  }
+
+  async function loadDir(path) {
+    setError("");
+    statusEl.textContent = "加载中…";
+    try {
+      const res = await api.fsList(path, showHidden.checked);
+      currentPath = res.path;
+      parentPath  = res.parent;
+      pathInput.value = currentPath;
+      listEl.innerHTML = "";
+      if (res.entries.length === 0) {
+        listEl.innerHTML = `<li class="folder-item empty">（此目录下无子目录）</li>`;
+      } else {
+        for (const e of res.entries) {
+          const li = document.createElement("li");
+          li.className = "folder-item" + (e.readable ? "" : " disabled");
+          li.innerHTML = `<span class="folder-icon">📁</span>
+                          <span class="folder-name">${escapeHTML(e.name)}</span>`;
+          if (e.readable) {
+            li.addEventListener("click", () => loadDir(e.path));
+          }
+          listEl.appendChild(li);
+        }
+      }
+      statusEl.textContent = res.truncated
+        ? `仅显示前 ${res.entries.length} 项（已截断）`
+        : `共 ${res.entries.length} 个子目录`;
+      upBtn.disabled = !parentPath;
+    } catch (e) {
+      setError(`加载失败: ${e.message}`);
+      statusEl.textContent = "";
+    }
+  }
+
+  // —— 一次性 keydown：Esc 关闭 / Enter 提交（焦点不在 path 输入框时）
+  function onKey(ev) {
+    if (ev.key === "Escape") finish(null);
+    else if (ev.key === "Enter" && document.activeElement === pathInput) {
+      ev.preventDefault();
+      loadDir(pathInput.value.trim());
+    }
+  }
+
+  function finish(picked) {
+    document.removeEventListener("keydown", onKey);
+    cancelBtn.onclick = null;
+    confirmBtn.onclick = null;
+    upBtn.onclick = null;
+    homeBtn.onclick = null;
+    goBtn.onclick = null;
+    showHidden.onchange = null;
+    modal.classList.add("is-hidden");
+    modal.style.display = "none";
+    onPick && onPick(picked);
+  }
+
+  document.addEventListener("keydown", onKey);
+  cancelBtn.onclick   = () => finish(null);
+  confirmBtn.onclick  = () => finish(currentPath || null);
+  upBtn.onclick       = () => parentPath && loadDir(parentPath);
+  goBtn.onclick       = () => loadDir(pathInput.value.trim());
+  homeBtn.onclick     = async () => {
+    try {
+      const r = await api.fsHome();
+      loadDir(r.path);
+    } catch (e) { setError(e.message); }
+  };
+  showHidden.onchange = () => loadDir(currentPath);
+
+  // 显示 modal + 加载初始目录
+  modal.classList.remove("is-hidden");
+  modal.style.display = "";
+
+  // 初始路径：用户传了就用、没传就家目录
+  let startPath = (initialPath || "").trim();
+  if (!startPath) {
+    try {
+      const r = await api.fsHome();
+      startPath = r.path;
+    } catch (_) {
+      startPath = "/";  // 极端情况下兜底
+    }
+  }
+  await loadDir(startPath);
 }
 
 async function onModeChange() {
@@ -177,8 +462,8 @@ async function onModeChange() {
 
 async function submitFromInput() {
   if (!currentSessionId) {
-    // 没会话自动新建一个
-    await onNewSession();
+    // 没会话自动新建一个（用默认配置，不弹窗，避免打断用户输入）
+    await quickCreateDefaultSession();
     if (!currentSessionId) return;
   }
   const box = document.getElementById("inputBox");

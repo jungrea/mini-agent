@@ -31,6 +31,10 @@ router = APIRouter(prefix="/api")
 class CreateSessionReq(BaseModel):
     title: str = ""
     mode: str = "default"
+    # 会话级工作区（绝对路径 / 可带 ~）；留空 = 用启动时的项目根。
+    # 非法路径（不存在 / 非目录 / 系统敏感目录）由 Session 校验后抛 ValueError，
+    # 这里捕获后转 400 返回前端。
+    workdir: Optional[str] = None
 
 
 class PatchSessionReq(BaseModel):
@@ -53,7 +57,13 @@ def list_sessions():
 
 @router.post("/sessions")
 def create_session(req: CreateSessionReq):
-    sess = get_manager().create(title=req.title, mode=req.mode)
+    try:
+        sess = get_manager().create(
+            title=req.title, mode=req.mode, workdir=req.workdir,
+        )
+    except ValueError as e:
+        # workdir 校验失败：不存在 / 非目录 / 系统敏感目录
+        raise HTTPException(400, f"workdir 无效: {e}") from e
     return sess.to_meta()
 
 

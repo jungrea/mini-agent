@@ -12,6 +12,11 @@ core/runtime —— 全局单例与权限管理器工厂。
 PermissionManager 不做成单例，而是提供工厂 build_perms(mode)：
     因为用户可能在 REPL 中 /mode 切换、或通过 CLI --mode 覆盖，
     每次初始化时的 mode 来自运行时输入，不适合在 import 时固化。
+
+会话级工作区切换（CURRENT_WORKDIR）：
+    见 core.config 模块的 CURRENT_WORKDIR 注释。webui session.py 在
+    agent_loop 调用前 set / 之后 reset，让"该会话的文件 / bash / 搜索
+    工具"路由到用户选定的目录。
 """
 
 from ..managers.background import BackgroundManager
@@ -22,7 +27,9 @@ from ..managers.todos import TodoManager
 from ..permissions.manager import PermissionManager
 from ..team.messaging import MessageBus
 from ..team.teammate import TeammateManager
-from .config import SKILLS_DIR
+# 重新导出 CURRENT_WORKDIR，让既有的 `from ..core.runtime import CURRENT_WORKDIR`
+# 调用方（webui/session.py）继续工作。真正定义在 core.config，避免循环 import。
+from .config import CURRENT_WORKDIR, SKILLS_DIR
 
 
 # === 全局单例（整个进程内共享） ===========================================
@@ -56,3 +63,12 @@ def build_perms(mode: str = "default") -> PermissionManager:
           （teammate 下 ask 会自动退化为 deny，见 team/teammate.py）
     """
     return PermissionManager(mode=mode)
+
+
+# 重新导出供 webui 等模块继续 `from .runtime import CURRENT_WORKDIR`
+__all__ = [
+    "TODO", "SKILLS", "TASK_MGR", "BG", "BUS", "CRON", "TEAM",
+    "build_perms",
+    "CURRENT_WORKDIR",
+]
+

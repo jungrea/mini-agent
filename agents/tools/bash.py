@@ -7,6 +7,10 @@ tools/bash —— shell 命令执行。
     本模块内置的"危险命令黑名单"只是最后一道兜底——真正的准入控制
     在 permissions/ 的 BashSecurityValidator + PermissionManager 中完成。
     即便 permission 放行，这里仍会阻断最致命的几条。
+
+工作区：
+    cwd 走 fs._active_workdir()——webui session 指定了 workdir 时跑在那里，
+    否则回退全局 WORKDIR。详见 tools/fs.py 模块说明。
 """
 
 import subprocess
@@ -14,8 +18,8 @@ import subprocess
 from ..core.config import (
     CONTEXT_TRUNCATE_CHARS,
     PERSIST_OUTPUT_TRIGGER_CHARS_BASH,
-    WORKDIR,
 )
+from .fs import _active_workdir
 from .persisted_output import maybe_persist_output
 
 
@@ -25,7 +29,7 @@ _HARD_BLOCKED = ("rm -rf /", "sudo", "shutdown", "reboot", "> /dev/")
 
 def run_bash(command: str, tool_use_id: str = "") -> str:
     """
-    在 WORKDIR 中执行一条 shell 命令并返回合并后的 stdout+stderr。
+    在当前活动工作区中执行一条 shell 命令并返回合并后的 stdout+stderr。
 
     参数：
         command:     完整 shell 命令字符串（shell=True，支持管道 / 重定向）
@@ -46,7 +50,7 @@ def run_bash(command: str, tool_use_id: str = "") -> str:
         r = subprocess.run(
             command,
             shell=True,
-            cwd=WORKDIR,
+            cwd=_active_workdir(),
             capture_output=True,
             text=True,
             timeout=120,

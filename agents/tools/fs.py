@@ -2,30 +2,55 @@
 tools/fs —— 文件系统类工具。
 
 对应源 s_full.py 第 130–134、151–180 行。
-    safe_path: 沙箱化路径（防越权）
+    safe_path: 沙箱化路径（防越权）—— 以"当前活动工作区"为根
     run_read:  读文件（按行截断 + 可选 limit + 超大落盘）
     run_write: 整文件覆盖写
     run_edit:  精确文本替换（只替换首次出现）
+
+工作区如何确定：
+    通过 _active_workdir() 解析。优先级：
+        1) core.runtime.CURRENT_WORKDIR ContextVar —— 由 webui session 在
+           agent_loop 执行前 set，让"该会话的工具"绑定到用户选定的目录
+        2) core.config.WORKDIR —— 全局回退（CLI / teammate / cron 等
+           没有"会话上下文"的场景）
+
+    这种解耦让 webui 的多会话可以各自指向不同目录，又对老调用方零影响。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ..core.config import CONTEXT_TRUNCATE_CHARS, WORKDIR
+from ..core.config import CONTEXT_TRUNCATE_CHARS, CURRENT_WORKDIR, WORKDIR
 from .persisted_output import maybe_persist_output
+
+
+def _active_workdir() -> Path:
+    """
+    返回当前活动工作区。
+
+    * 在 webui worker 线程里：由 Session._run_one_round 在 agent_loop 调用
+      前 set 入 ContextVar，返回该会话指定的目录
+    * 其它一切场景（CLI、teammate 后台线程、cron 触发的子 agent...）：
+      ContextVar 默认 None，回退全局 WORKDIR
+
+    返回 Path 而不是 str —— 下游 (.../path).resolve() / is_relative_to 都要 Path
+    """
+    cw = CURRENT_WORKDIR.get()
+    return cw if cw is not None else WORKDIR
 
 
 def safe_path(p: str) -> Path:
     """
-    把用户/模型提供的路径解析成 WORKDIR 内的绝对路径，并拒绝路径越权。
+    把用户/模型提供的路径解析成 _active_workdir() 内的绝对路径，
+    并拒绝路径越权（防 "../../../etc/passwd" 类穿越）。
 
-    防御的是形如 "../../../etc/passwd" 这类路径穿越：
-    resolve() 会把 .. 展平，然后 is_relative_to(WORKDIR) 判断最终位置
+    resolve() 会把 .. 展平，然后 is_relative_to(base) 判断最终位置
     是否仍在沙箱根目录下，不在则抛异常。
     """
-    path = (WORKDIR / p).resolve()
-    if not path.is_relative_to(WORKDIR):
+    base = _active_workdir()
+    path = (base / p).resolve()
+    if not path.is_relative_to(base):
         raise ValueError(f"Path escapes workspace: {p}")
     return path
 
@@ -35,7 +60,7 @@ def run_read(path: str, tool_use_id: str = "", limit: int | None = None) -> str:
     读取文件内容。
 
     参数：
-        path:         目标文件相对路径（相对 WORKDIR）
+        path:         目标文件相对路径（相对当前活动工作区）
         tool_use_id:  LLM 侧工具调用 ID，用于可能的落盘
         limit:        最多返回多少行；超出时在末尾追加"... (N more)"
 

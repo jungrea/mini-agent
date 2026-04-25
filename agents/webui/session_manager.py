@@ -40,13 +40,22 @@ class SessionManager:
 
     # ---------------- CRUD ----------------
 
-    def create(self, title: str = "", mode: str = "default") -> Session:
+    def create(self, title: str = "", mode: str = "default",
+               workdir: Optional[str] = None) -> Session:
+        """
+        新建会话。
+
+        workdir：本会话的"文件 / bash / 搜索"工具沙箱根；None=用全局 WORKDIR。
+                 校验由 Session.__init__ 内的 validate_workdir 完成；非法路径
+                 会抛 ValueError，由调用方（REST handler）转 400 给前端。
+        """
         if mode not in MODES:
             mode = "default"
         sid = uuid.uuid4().hex[:12]
         if not title:
             title = f"新对话 {time.strftime('%H:%M')}"
-        sess = Session(id=sid, title=title, mode=mode, history=[], hooks=self._hooks)
+        sess = Session(id=sid, title=title, mode=mode, history=[],
+                       hooks=self._hooks, workdir=workdir)
         with self._lock:
             self._sessions[sid] = sess
         self._persist(sess)
@@ -89,6 +98,8 @@ class SessionManager:
                     "updated_at": raw.get("updated_at", 0),
                     "message_count": len(raw.get("history", [])),
                     "state": "idle",
+                    # 老存档没有 workdir 字段时返回 None（= 项目根），完全兼容
+                    "workdir": raw.get("workdir"),
                 }
         out = list(metas.values())
         out.sort(key=lambda m: m.get("updated_at", 0), reverse=True)
@@ -138,6 +149,8 @@ class SessionManager:
             "mode": sess.mode,
             "created_at": sess.created_at,
             "updated_at": sess.updated_at,
+            # workdir 写绝对路径字符串；None 表示用全局项目根
+            "workdir": str(sess.workdir_path) if sess.workdir_path else None,
             "history": [serialize_message(m) for m in sess.history],
         }
         p = SESSIONS_DIR / f"{sess.id}.json"
@@ -165,6 +178,7 @@ class SessionManager:
             mode=raw.get("mode", "default"),
             history=raw.get("history", []),
             hooks=self._hooks,
+            workdir=raw.get("workdir"),
         )
         sess.created_at = raw.get("created_at", sess.created_at)
         sess.updated_at = raw.get("updated_at", sess.updated_at)

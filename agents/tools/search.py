@@ -23,8 +23,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ..core.config import CONTEXT_TRUNCATE_CHARS, WORKDIR
-from .fs import safe_path
+from ..core.config import CONTEXT_TRUNCATE_CHARS
+from .fs import _active_workdir, safe_path
 
 
 # 默认最多返回多少行命中；过多会拖垮上下文
@@ -109,7 +109,7 @@ def _search_with_ripgrep(
         proc = subprocess.run(
             args,
             capture_output=True, text=True, timeout=30,
-            cwd=str(WORKDIR),
+            cwd=str(_active_workdir()),
         )
     except subprocess.TimeoutExpired:
         return "Error: search timed out after 30s"
@@ -126,8 +126,9 @@ def _search_with_ripgrep(
         return "(no matches)"
 
     lines = out.splitlines()
-    # 把绝对路径收敛为相对 WORKDIR 的路径，输出更短
-    rel_lines = [_relativize(line) for line in lines]
+    # 把绝对路径收敛为相对当前工作区的路径，输出更短
+    base = _active_workdir()
+    rel_lines = [_relativize(line, base) for line in lines]
 
     truncated = len(rel_lines) > max_results
     if truncated:
@@ -173,7 +174,10 @@ def _search_with_python(
                 with fpath.open("r", encoding="utf-8", errors="replace") as f:
                     for lineno, line in enumerate(f, start=1):
                         if regex.search(line):
-                            rel = fpath.relative_to(WORKDIR)
+                            try:
+                                rel = fpath.relative_to(_active_workdir())
+                            except ValueError:
+                                rel = fpath
                             hits.append(f"{rel}:{lineno}:{line.rstrip()}")
                             if len(hits) >= max_results:
                                 hits.append(f"... (truncated at {max_results} matches)")
@@ -186,16 +190,20 @@ def _search_with_python(
     return "\n".join(hits)[:CONTEXT_TRUNCATE_CHARS]
 
 
-def _relativize(line: str) -> str:
+def _relativize(line: str, base: Path | None = None) -> str:
     """
     把 "absolute/path:line:content" 变成 "relative/path:line:content"。
     ripgrep 给的是 --no-heading 格式，第一个 ':' 前是路径。
+
+    base 留空时回退当前活动工作区（保持向后兼容）。
     """
+    if base is None:
+        base = _active_workdir()
     try:
         path_part, rest = line.split(":", 1)
         abs_path = Path(path_part)
-        if abs_path.is_absolute() and str(abs_path).startswith(str(WORKDIR)):
-            rel = abs_path.relative_to(WORKDIR)
+        if abs_path.is_absolute() and str(abs_path).startswith(str(base)):
+            rel = abs_path.relative_to(base)
             return f"{rel}:{rest}"
     except (ValueError, OSError):
         pass

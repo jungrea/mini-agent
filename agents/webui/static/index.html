@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>mini-agent WebUI</title>
-<link rel="stylesheet" href="/static/css/app.css?v=9" />
+<link rel="stylesheet" href="/static/css/app.css?v=13" />
 <script>
   // 主题首帧防闪烁：在样式应用前把上次选择写到 <html data-theme>。
   // localStorage 可能被浏览器禁用（隐私模式等），做好容错。
@@ -24,6 +24,7 @@
   <div class="topbar-left">
     <span class="logo">🤖 mini-agent</span>
     <span class="current-title" id="currentTitle">未选择会话</span>
+    <span class="workdir-tag is-hidden" id="currentWorkdir" style="display:none" title=""></span>
   </div>
 
   <div class="topbar-mid">
@@ -142,7 +143,67 @@
   <ul id="notifyDrawerList" class="notify-drawer-list"></ul>
 </aside>
 
+<!-- ========== New Session Modal（点"+ 新建"展开）========== -->
+<div id="newSessionModal" class="modal is-hidden" style="display:none">
+  <div class="modal-box new-session-box">
+    <h3 class="no-icon">新建会话</h3>
+    <div class="modal-row">
+      <label>工作区</label>
+      <div class="workdir-input-wrap">
+        <div class="workdir-input-row">
+          <input id="newSessionWorkdir" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="留空 = 项目根目录（默认）" />
+          <button id="newSessionBrowse" class="btn-ghost" type="button" title="浏览本机目录">📂 浏览</button>
+        </div>
+        <div class="workdir-hint" id="newSessionWorkdirHint">
+          指定一个绝对路径（支持 ~/），让本会话的 read/write/bash/search
+          工具锚定到那里；不影响其它会话与定时任务等全局状态。
+        </div>
+        <ul id="newSessionRecent" class="workdir-recent is-hidden" style="display:none"></ul>
+      </div>
+    </div>
+    <div class="modal-row">
+      <label>权限模式</label>
+      <select id="newSessionMode">
+        <option value="default">default</option>
+        <option value="plan">plan</option>
+        <option value="auto">auto</option>
+      </select>
+    </div>
+    <div class="modal-error is-hidden" id="newSessionError" style="display:none"></div>
+    <div class="modal-btns">
+      <button id="newSessionCancel" class="btn-ghost">取消</button>
+      <button id="newSessionConfirm" class="btn-allow">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== Folder Picker Modal（目录浏览，从"新建会话弹窗"内打开）========== -->
+<div id="folderPickerModal" class="modal is-hidden" style="display:none">
+  <div class="modal-box folder-picker-box">
+    <h3 class="no-icon">📂 选择工作目录</h3>
+    <div class="folder-picker-pathbar">
+      <input id="folderPickerPath" type="text" spellcheck="false" autocomplete="off" />
+      <button id="folderPickerGo" class="btn-ghost" type="button" title="跳转到该路径">⏎ 跳转</button>
+    </div>
+    <div class="folder-picker-toolbar">
+      <button id="folderPickerUp" class="btn-ghost" type="button" title="上一级">⬆ 上级</button>
+      <button id="folderPickerHome" class="btn-ghost" type="button" title="回到家目录">🏠 家目录</button>
+      <label class="folder-picker-hidden">
+        <input id="folderPickerShowHidden" type="checkbox" /> 显示隐藏目录
+      </label>
+      <span class="folder-picker-status" id="folderPickerStatus"></span>
+    </div>
+    <ul id="folderPickerList" class="folder-picker-list"></ul>
+    <div class="modal-error is-hidden" id="folderPickerError" style="display:none"></div>
+    <div class="modal-btns">
+      <button id="folderPickerCancel" class="btn-ghost">取消</button>
+      <button id="folderPickerConfirm" class="btn-allow">使用此目录</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========== Scripts (native ES modules, no build step) ========== -->
-<script type="module" src="/static/js/app.js?v=14"></script>
+<script type="module" src="/static/js/app.js?v=18"></script>
 </body>
 </html>

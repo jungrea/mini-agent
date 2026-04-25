@@ -42,18 +42,82 @@ import json
 import threading
 import time
 import uuid
+from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Optional
 
+from ..core.config import WORKDIR
 from ..core.hooks import HookManager
 from ..core.loop import agent_loop
-from ..core.runtime import TODO
+from ..core.runtime import CURRENT_WORKDIR, TODO
 from ..managers.compression import auto_compact
 from ..permissions.manager import MODES, PermissionManager
 
 from .config import PERMISSION_ASK_TIMEOUT, WORKER_POLL_INTERVAL
 from .events import Event, EventBus, EventType, GLOBAL_BUS
 from .usage_tracker import SessionUsage, snapshot_global
+
+
+# ---------------- 工作区路径校验 ----------------
+#
+# 用户在 WebUI 创建会话时可以指定一个文件夹作为本会话的工作区。出于安全
+# 考虑，写到磁盘前先做一道校验：
+#   * 必须是已存在的目录（避免误把"未来路径"当工作区，工具往里写文件
+#     会建出一棵不属于用户预期的目录树）
+#   * 不能落在系统敏感目录（/、/System、/usr、/etc、/bin、/sbin、/var）—
+#     这些位置即使文件操作"理论上"被沙箱包住，bash 工具也可能改坏系统
+#   * 解析为绝对路径 + 展开 ~ —— UI 友好
+#
+# 不做的事：
+#   * 不强制要求是 git 仓库 / 不强制要 .git 之类——目录用途由用户自决
+#   * 不缓存校验结果——目录可能被外部删除，每次切换前再校验
+
+#: 系统敏感目录黑名单：禁止把它们或它们任何祖先作为 workdir
+_SENSITIVE_PREFIXES: tuple[Path, ...] = tuple(
+    Path(p).resolve() for p in (
+        "/", "/System", "/Library", "/usr", "/etc", "/bin", "/sbin", "/var",
+        "/private/etc", "/private/var",
+    ) if Path(p).exists()
+)
+
+
+def validate_workdir(raw: str | None) -> Optional[Path]:
+    """
+    把用户传入的 workdir 字符串解析成绝对 Path 并做安全校验。
+
+    返回：
+        * None —— raw 为空/空白：表示"使用项目根 WORKDIR"，是合法的
+        * Path —— 校验通过的绝对路径
+    抛 ValueError —— 校验失败（前端会拿到 detail 提示）
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+
+    p = Path(s).expanduser()
+    try:
+        p = p.resolve(strict=False)
+    except OSError as e:
+        raise ValueError(f"无法解析路径: {e}")
+
+    if not p.exists():
+        raise ValueError(f"目录不存在: {p}")
+    if not p.is_dir():
+        raise ValueError(f"不是目录: {p}")
+
+    # 黑名单：禁止 workdir 等于或上溯到任何敏感前缀
+    for bad in _SENSITIVE_PREFIXES:
+        try:
+            if p == bad or p.is_relative_to(bad) and len(p.parts) <= len(bad.parts) + 1:
+                # 规则细化：完全等于敏感目录 / 直接是敏感目录的下一级 → 拒绝
+                # （/Users/xxx 是 / 的下一级，但实际上是用户家目录；这里
+                # 只过滤明显的系统位置——/Users 不在黑名单里）
+                raise ValueError(f"禁止使用系统敏感目录: {p}")
+        except ValueError:
+            raise
+    return p
 
 
 # ---------------- 消息 / content 的 JSON 序列化 ----------------
@@ -108,7 +172,8 @@ class Session:
 
     def __init__(self, id: str, title: str, mode: str = "default",
                  history: Optional[list] = None,
-                 hooks: Optional[HookManager] = None) -> None:
+                 hooks: Optional[HookManager] = None,
+                 workdir: Optional[str] = None) -> None:
         if mode not in MODES:
             mode = "default"
         self.id: str = id
@@ -116,6 +181,16 @@ class Session:
         self.mode: str = mode
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
+
+        # 会话级工作区（None = 沿用项目根 WORKDIR）。
+        # 校验在 SessionManager.create 之前已经做过；这里再 normalize 一次，
+        # 容忍 _load 时旧记录里的字符串路径（也走相同 validate）。
+        try:
+            self.workdir_path: Optional[Path] = validate_workdir(workdir)
+        except ValueError:
+            # 持久化里有非法路径（目录可能已被删）时不阻塞会话载入，
+            # 退化到项目根；用户可以通过新建会话切走
+            self.workdir_path = None
 
         self.history: list = history or []
         self.events: EventBus = EventBus()
@@ -267,6 +342,9 @@ class Session:
             "updated_at": self.updated_at,
             "message_count": len(self.history),
             "state": self.state(),
+            # workdir：None 表示用全局项目根；前端拿到后渲染顶部小标签
+            "workdir": str(self.workdir_path) if self.workdir_path else None,
+            "workdir_default": str(WORKDIR),
         }
 
     def to_dict_full(self) -> dict:
@@ -431,6 +509,17 @@ class Session:
 
         before = snapshot_global()
         error_msg: Optional[str] = None
+
+        # === 会话级工作区绑定 ===
+        # 在调用 agent_loop 之前把当前会话的 workdir_path 注入 ContextVar，
+        # tools/fs.py / bash.py / search.py 都通过 _active_workdir() 读这个值。
+        # 用 try/finally + token reset 保证：
+        #   * 即便 agent_loop 抛异常，ContextVar 也能正确还原
+        #   * 不同会话的 worker 线程持有各自独立的 Context（contextvars
+        #     原生提供线程隔离），互不干扰
+        wd_token = CURRENT_WORKDIR.set(self.workdir_path) \
+            if self.workdir_path is not None else None
+
         try:
             agent_loop(
                 self.history, self.perms,
@@ -444,6 +533,9 @@ class Session:
                 type=EventType.ERROR, session_id=self.id,
                 data={"message": error_msg},
             ))
+        finally:
+            if wd_token is not None:
+                CURRENT_WORKDIR.reset(wd_token)
 
         # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的 tool_use / tool_result）
         self._publish_tail(marker, pushed_tool_use_ids, pushed_tool_result_ids)

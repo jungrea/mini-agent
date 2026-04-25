@@ -319,6 +319,8 @@ input, textarea, select { font: inherit; color: inherit; }
   margin-bottom: 12px;
   animation: fadeIn .2s ease-out;
 }
+/* 连续的折叠工具卡挤在一起更紧凑 */
+.msg.tool.collapsed + .msg.tool.collapsed { margin-top: -6px; }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -343,22 +345,185 @@ input, textarea, select { font: inherit; color: inherit; }
   white-space: pre-wrap; word-wrap: break-word;
 }
 
+/* ================== Markdown rendering（只作用于 .md-body；即 assistant 回复） ================== */
+/*
+ * 原 .msg.assistant .text 的 white-space:pre-wrap 会让块级元素之间出现多余换行。
+ * .md-body 选择器覆盖到 markdown 渲染出的结构化 HTML，让浏览器按正常流排版；
+ * 纯文本 LLM 输出（不含 markdown 结构）的视觉效果与以前几乎一致，但标题、列表、
+ * 代码块等结构化内容会显著美观。
+ */
+.md-body { white-space: normal; word-wrap: break-word; }
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child  { margin-bottom: 0; }
+
+.md-body p {
+  margin: 0.4em 0;
+  line-height: 1.55;
+}
+
+.md-body h1, .md-body h2, .md-body h3,
+.md-body h4, .md-body h5, .md-body h6 {
+  margin: 0.9em 0 0.4em;
+  line-height: 1.3;
+  color: var(--text-0);
+  font-weight: 600;
+}
+.md-body h1 { font-size: 1.35em; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.md-body h2 { font-size: 1.2em;  border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.md-body h3 { font-size: 1.08em; }
+.md-body h4 { font-size: 1em; color: var(--text-1); }
+.md-body h5, .md-body h6 { font-size: 0.95em; color: var(--text-2); }
+
+.md-body ul, .md-body ol {
+  margin: 0.4em 0;
+  padding-left: 1.6em;
+}
+.md-body li { margin: 0.15em 0; line-height: 1.55; }
+
+.md-body blockquote {
+  margin: 0.5em 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-2);
+  color: var(--text-1);
+  border-radius: 0 6px 6px 0;
+}
+
+.md-body a {
+  color: var(--accent-2);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--accent-2);
+}
+.md-body a:hover { color: var(--accent); border-bottom-style: solid; }
+
+.md-body strong { font-weight: 600; color: var(--text-0); }
+.md-body em     { font-style: italic; color: var(--text-0); }
+
+/* 行内代码 */
+.md-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+  background: var(--bg-3);
+  color: var(--text-0);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* 代码块（围栏 ``` 生成的 <pre class="code-block">） */
+.md-body pre.code-block {
+  position: relative;
+  margin: 0.6em 0;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.md-body pre.code-block code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: var(--text-0);
+  white-space: pre;   /* 代码块内保留原始空白 + 横向滚动 */
+}
+.md-body pre.code-block .code-lang {
+  position: absolute;
+  top: 6px; right: 8px;
+  font-size: 10px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  user-select: none;
+}
+
+.md-body hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* 表格（GFM） */
+.md-body table.md-table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 13px;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;    /* 窄屏横向滚动而不是挤破布局 */
+}
+.md-body table.md-table thead {
+  background: var(--bg-2);
+}
+.md-body table.md-table th,
+.md-body table.md-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  line-height: 1.45;
+  vertical-align: top;
+}
+.md-body table.md-table th {
+  color: var(--text-0);
+  font-weight: 600;
+  text-align: left;
+}
+.md-body table.md-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+.md-body table.md-table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+
 .msg.tool {
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 13px;
+  transition: padding .12s ease, background .12s ease;
 }
 .msg.tool .tool-head {
   display: flex; gap: 8px; align-items: center;
   color: var(--text-1);
   cursor: pointer;
+  min-width: 0;
 }
+.msg.tool .tool-caret {
+  display: inline-block;
+  color: var(--text-2);
+  font-size: 10px;
+  width: 10px;
+  transition: transform .15s ease;
+  flex-shrink: 0;
+}
+.msg.tool:not(.collapsed) .tool-caret { transform: rotate(90deg); }
+.msg.tool .tool-icon { flex-shrink: 0; }
 .msg.tool .tool-name {
   color: var(--accent-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-weight: 600;
+  flex-shrink: 0;
+}
+.msg.tool .tool-summary {
+  color: var(--text-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.msg.tool .tool-id {
+  color: var(--text-2);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  flex-shrink: 0;
+  display: none;   /* 默认不显示 id，展开后也仅作为可选细节 */
 }
 .msg.tool .tool-input,
 .msg.tool .tool-result {
@@ -374,8 +539,13 @@ input, textarea, select { font: inherit; color: inherit; }
   color: var(--text-1);
 }
 .msg.tool .tool-result { color: var(--text-1); border-top: 1px dashed var(--border); }
+
+/* ---- 折叠态：紧凑单行 ---- */
+.msg.tool.collapsed { padding: 6px 10px; }
 .msg.tool.collapsed .tool-input,
 .msg.tool.collapsed .tool-result { display: none; }
+/* 展开态下隐藏摘要，避免与完整 input 重复 */
+.msg.tool:not(.collapsed) .tool-summary { display: none; }
 
 .msg.notice {
   padding: 6px 10px;
@@ -479,6 +649,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .msg.tool .tool-status {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--text-2); margin-left: auto;
+  flex-shrink: 0;
 }
 .msg.tool .tool-status .spinner-sm {
   width: 10px; height: 10px;
@@ -786,4 +957,211 @@ input, textarea, select { font: inherit; color: inherit; }
   color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ================== 顶部"当前会话工作区"小标签 ================== */
+.workdir-tag {
+  display: inline-flex; align-items: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(99, 102, 241, .15);
+  color: var(--accent-2);
+  font-size: 11px;
+  border: 1px solid rgba(99, 102, 241, .3);
+  cursor: default;
+  user-select: text;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ================== 新建会话弹窗 ================== */
+.modal-box.new-session-box {
+  width: 500px;
+}
+.modal-box h3.no-icon::before { content: ""; }
+.modal-box h3.no-icon { color: var(--text-0); }
+
+.workdir-input-wrap {
+  flex: 1;
+  display: flex; flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+.workdir-input-wrap input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+.workdir-input-wrap input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, .2);
+}
+.workdir-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.workdir-recent {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+.workdir-recent::before {
+  content: "最近用过";
+  display: block;
+  padding: 2px 6px 4px;
+  font-size: 10px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.workdir-recent li {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-1);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workdir-recent li:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+.modal-box select {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  font-size: 13px;
+  outline: none;
+}
+
+.modal-error {
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, .1);
+  border: 1px solid rgba(239, 68, 68, .3);
+  border-radius: 6px;
+  color: var(--deny);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* "工作区"输入行 + 旁边的"📂 浏览"按钮 */
+.workdir-input-row {
+  display: flex; gap: 6px; align-items: stretch;
+}
+.workdir-input-row input {
+  flex: 1;
+}
+.workdir-input-row button {
+  flex-shrink: 0;
+  padding: 0 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ================== Folder Picker（二级目录浏览模态框） ================== */
+.modal-box.folder-picker-box {
+  width: 620px;
+  max-width: 92vw;
+  display: flex; flex-direction: column;
+  max-height: 80vh;
+}
+
+.folder-picker-pathbar {
+  display: flex; gap: 6px;
+  margin-bottom: 8px;
+}
+.folder-picker-pathbar input {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-0);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  outline: none;
+}
+.folder-picker-pathbar input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, .2);
+}
+
+.folder-picker-toolbar {
+  display: flex; gap: 6px; align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.folder-picker-toolbar button { font-size: 12px; padding: 4px 10px; }
+.folder-picker-toolbar button:disabled { opacity: .4; cursor: not-allowed; }
+.folder-picker-hidden {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 4px; cursor: pointer; user-select: none;
+}
+.folder-picker-status {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.folder-picker-list {
+  list-style: none;
+  margin: 0; padding: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex: 1;
+  min-height: 280px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.folder-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--text-1);
+  cursor: pointer;
+  user-select: none;
+}
+.folder-item:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.folder-item.disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.folder-item.empty {
+  cursor: default;
+  color: var(--text-2);
+  font-style: italic;
+}
+.folder-item.empty:hover { background: transparent; }
+.folder-icon { font-size: 14px; }
+.folder-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
 }

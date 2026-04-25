@@ -12,7 +12,9 @@ core/config —— 全局配置与常量。
 """
 
 import os
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Optional
 
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -35,6 +37,31 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 # 这里使用 Path.cwd() 而不是本文件路径——因为教学脚本的语义是
 # "以调用者当前工作目录为沙箱根"，与 s_full.py 保持一致。
 WORKDIR: Path = Path.cwd()
+
+# === 会话级工作区上下文 ====================================================
+#
+# CURRENT_WORKDIR：调用方（webui Session worker）在 agent_loop 执行前
+# 用 token = CURRENT_WORKDIR.set(Path(...)) 把当前会话的 workdir 写入
+# Context；执行结束后 CURRENT_WORKDIR.reset(token) 还原。
+#
+# 工具层（fs / bash / search）通过 fs._active_workdir() 读取：
+#   * 有值 → 用会话指定的 workdir（webui 多会话各自独立）
+#   * 无值 → 回退 WORKDIR（CLI / teammate / cron 等无会话上下文场景）
+#
+# 默认值留 None 而不是 WORKDIR：避免 ContextVar 在模块加载时就持引用，
+# 也方便 _active_workdir() 一处统一回退。
+#
+# 放在 config（而不是 runtime）是刻意的：
+#   * config 是依赖链最底层（不 import 任何 agents 子模块），不会引入
+#     "tools/fs → core/runtime → team/teammate → tools/bash → tools/fs"
+#     这种循环 import
+#   * WORKDIR 与 CURRENT_WORKDIR 语义相邻，放一起便于阅读
+#
+# 注意：用 Optional[Path] 而不是 Path | None，因为 ContextVar 的泛型参数
+# 在 Python 3.9 也走运行时求值（不被 from __future__ import annotations 推迟），
+# PEP 604 的 X | None 语法在 3.9 上 TypeError。本项目 README 标的是 3.10+，
+# 但保留 3.9 兼容性几乎零成本，没必要因此踩雷。
+CURRENT_WORKDIR: "ContextVar[Optional[Path]]" = ContextVar("CURRENT_WORKDIR", default=None)
 
 # 官方 SDK：若 base_url=None，则走官方 Anthropic 端点
 client: Anthropic = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))

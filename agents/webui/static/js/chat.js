@@ -1,4 +1,5 @@
 // chat.js —— 对话流渲染。
+import { renderMarkdown } from "./markdown.js?v=18";
 
 function escapeHTML(s) {
   return String(s == null ? "" : s)
@@ -9,6 +10,39 @@ function escapeHTML(s) {
 function formatInput(obj) {
   if (obj == null) return "";
   try { return JSON.stringify(obj, null, 2); } catch (_) { return String(obj); }
+}
+
+/**
+ * 从工具入参里抽一条"单行摘要"用于折叠态显示，比如：
+ *   bash   -> `cat foo.py`
+ *   read   -> `path/to/file.py`
+ *   search -> `pattern="foo" path=src`
+ * 找不到合适字段就退化为一行 JSON。
+ */
+function summarizeInput(name, input) {
+  if (input == null) return "";
+  if (typeof input !== "object") return String(input);
+  // 常见工具字段优先级
+  const preferKeys = [
+    "command", "cmd",
+    "file_path", "filePath", "path", "target_file", "target_directory",
+    "pattern", "query", "url",
+  ];
+  for (const k of preferKeys) {
+    if (input[k] != null && input[k] !== "") return String(input[k]);
+  }
+  // 退化：把所有键值挤成一行
+  try {
+    const one = JSON.stringify(input);
+    return one;
+  } catch (_) { return String(input); }
+}
+
+function truncate(s, max = 140) {
+  s = String(s == null ? "" : s);
+  s = s.replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
 
 function scrollToBottom() {
@@ -77,7 +111,13 @@ export const chat = {
     const box = document.getElementById("messages");
     const el = document.createElement("div");
     el.className = "msg assistant";
-    el.innerHTML = `<div class="text">${escapeHTML(text)}</div>`;
+    // 渲染 markdown：代码块、标题、列表、粗体、链接等。renderMarkdown
+    // 内部先 escape 再做片段替换，不会产生 XSS 风险。
+    // user / tool_result / notice 等其它来源故意不走 markdown：
+    //   - 用户输入保留所见即所得
+    //   - 工具输出保留原始空白/制表/路径
+    //   - notice 是系统文案不应被误认为 markdown
+    el.innerHTML = `<div class="text md-body">${renderMarkdown(text)}</div>`;
     box.appendChild(el);
     scrollToBottom();
   },
@@ -86,6 +126,12 @@ export const chat = {
    * 显示或更新一个 tool_use 卡片。
    * status ∈ "running" | "done" | "error"；不传则保留当前状态。
    * 同一个 id 多次调用会更新已有卡片而不是插新卡片（支持流式）。
+   *
+   * 折叠策略：
+   *  - 默认折叠为单行（工具名 + 参数摘要 + 状态）
+   *  - running 状态下自动展开，便于实时感知进度/入参
+   *  - 完成/出错后自动重新折叠（若用户没有手动切换过）
+   *  - 用户点击过 head 后，dataset.userToggled = "1"，后续状态变化不再自动折叠/展开
    */
   addToolUse(id, name, input, status = "running") {
     // 工具卡片出现时，把"思考中"泡泡撤掉（工具也代表 LLM 已经作出响应）
@@ -95,24 +141,28 @@ export const chat = {
     let el = id ? box.querySelector(`.msg.tool[data-tool-use-id="${CSS.escape(id)}"]`) : null;
     if (!el) {
       el = document.createElement("div");
-      el.className = "msg tool";
+      el.className = "msg tool collapsed";
       el.dataset.toolUseId = id || "";
       el.innerHTML = `
         <div class="tool-head">
-          <span>🔧</span>
+          <span class="tool-caret" aria-hidden="true">▸</span>
+          <span class="tool-icon" aria-hidden="true">🔧</span>
           <span class="tool-name"></span>
-          <span class="tool-id" style="color:var(--text-2);font-size:11px"></span>
+          <span class="tool-summary"></span>
+          <span class="tool-id"></span>
           <span class="tool-status"></span>
         </div>
         <div class="tool-input"></div>
       `;
       el.querySelector(".tool-head").addEventListener("click", () => {
         el.classList.toggle("collapsed");
+        el.dataset.userToggled = "1";
       });
       box.appendChild(el);
     }
     el.querySelector(".tool-name").textContent = name || "?";
     el.querySelector(".tool-id").textContent = id ? `(${id})` : "";
+    el.querySelector(".tool-summary").textContent = truncate(summarizeInput(name, input));
     el.querySelector(".tool-input").textContent = formatInput(input);
     this._setToolStatus(el, status);
     scrollToBottom();
@@ -146,11 +196,19 @@ export const chat = {
       s.innerHTML = `<span class="spinner-sm"></span><span>运行中</span>`;
     } else if (status === "done") {
       el.classList.add("is-done");
-      const txt = durationMs != null ? `✓ 完成 · ${formatDuration(durationMs)}` : `✓ 完成`;
+      const txt = durationMs != null ? `✓ ${formatDuration(durationMs)}` : `✓`;
       s.textContent = txt;
     } else if (status === "error") {
       el.classList.add("is-error");
       s.textContent = `✕ 错误`;
+    }
+    // 自动折叠/展开策略（尊重用户手动切换）
+    if (el.dataset.userToggled !== "1") {
+      if (status === "running" || status === "error") {
+        el.classList.remove("collapsed");
+      } else if (status === "done") {
+        el.classList.add("collapsed");
+      }
     }
   },
 
@@ -171,10 +229,20 @@ export const chat = {
       if (container.classList.contains("is-running")) this._setToolStatus(container, "done");
     } else {
       const el = document.createElement("div");
-      el.className = "msg tool is-done";
-      el.innerHTML = `<div class="tool-head">↩ tool_result</div>
+      el.className = "msg tool is-done collapsed";
+      el.innerHTML = `<div class="tool-head">
+                        <span class="tool-caret" aria-hidden="true">▸</span>
+                        <span class="tool-icon" aria-hidden="true">↩</span>
+                        <span class="tool-name">tool_result</span>
+                        <span class="tool-summary"></span>
+                      </div>
                       <div class="tool-result"></div>`;
       el.querySelector(".tool-result").textContent = txt;
+      el.querySelector(".tool-summary").textContent = truncate(txt);
+      el.querySelector(".tool-head").addEventListener("click", () => {
+        el.classList.toggle("collapsed");
+        el.dataset.userToggled = "1";
+      });
       box.appendChild(el);
     }
     scrollToBottom();

@@ -35,7 +35,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .config import WORKDIR
+from .config import CURRENT_WORKDIR, WORKDIR
 
 # 注意：skills / tools 都走延迟 import（方法内 import），
 # 避免 `prompts → runtime → team/teammate → prompts` 的循环导入。
@@ -257,10 +257,35 @@ class SystemPromptBuilder:
             * workdir    —— 沙箱根（config.WORKDIR）
             * memory_dir —— `.memory/` 目录位置（默认 workdir/.memory）
             * tools      —— 工具 schema；默认延迟从 dispatch.TOOLS 取
+
+        注意：这里的 workdir 只是"默认值 / 回退值"。真正装配每段时会调用
+        `_active_workdir()` 读取 contextvars——webui session 在 agent_loop
+        之前 set 会话级 workdir 后，system prompt 里的 "You are a coding
+        agent at ..." 和 "Workdir: ..." 都会**自动**切到会话级 workdir，
+        让 LLM 从一开始就知道自己被锚在哪里。
+
+        不把 workdir 写死的原因：
+            * BUILDER 是进程级单例，多 webui 会话并发时要"按 Context 读值"
+            * CLI/teammate 场景 CURRENT_WORKDIR 为 None，回退 self.workdir，
+              行为与改前完全一致（向后兼容）
         """
         self.workdir: Path = workdir or WORKDIR
         self.memory_dir: Path = memory_dir or (self.workdir / ".memory")
         self._tools_override = tools
+
+    # ------------------------------------------------------------------
+    # 运行时工作区解析：ContextVar 优先 / 构造时 workdir 回退
+    # ------------------------------------------------------------------
+    def _active_workdir(self) -> Path:
+        """
+        优先读会话级 CURRENT_WORKDIR（webui session._run_one_round 在 agent_loop
+        之前会 set），未设时回退构造时的 workdir（通常是全局 WORKDIR）。
+
+        每次调用都读一次——不做缓存。BUILDER.build() 调用成本本来就 <1ms，
+        读一次 ContextVar 是纳秒级，无需优化。
+        """
+        cw = CURRENT_WORKDIR.get()
+        return cw if cw is not None else self.workdir
 
     # ------------------------------------------------------------------
     # 延迟取 TOOLS：避免 core.prompts 顶层 import core.dispatch
@@ -277,9 +302,13 @@ class SystemPromptBuilder:
     # ------------------------------------------------------------------
     def _build_core(self) -> str:
         """段 1：核心指令。保留原 SYSTEM 的行为准则，仅改为完整段落。"""
+        wd = self._active_workdir()
         return (
             "# Core instructions\n"
-            f"You are a coding agent at {self.workdir}. Use tools to solve tasks.\n"
+            f"You are a coding agent at {wd}. Use tools to solve tasks.\n"
+            "All file / bash / search tools are sandboxed under the workdir above — "
+            "always use paths relative to it (e.g. 'notes.md', 'src/foo.py'); "
+            "do NOT write absolute paths rooted elsewhere.\n"
             "Prefer task_create/task_update/task_list for multi-step work.\n"
             "Use TodoWrite for short checklists.\n"
             "Use task for subagent delegation. Use load_skill for specialized knowledge.\n"
@@ -303,7 +332,10 @@ class SystemPromptBuilder:
 
     def _build_memory(self) -> str:
         """段 4：记忆。目录不存在或空时返回空串。"""
-        items = _scan_memory(self.memory_dir)
+        # memory_dir 也跟随 active workdir（会话级 workdir 下可能有自己的 .memory/）
+        active_memory_dir = self._active_workdir() / ".memory" \
+            if CURRENT_WORKDIR.get() is not None else self.memory_dir
+        items = _scan_memory(active_memory_dir)
         if not items:
             return ""
         lines = ["# Memory"]
@@ -339,12 +371,13 @@ class SystemPromptBuilder:
         段 6：动态上下文。包含随每轮变化的信息——日期、cwd、平台、权限模式。
 
         mode 不传时省略权限模式行；想"纯静态"场景（测试、缓存）可以传 None。
+        Workdir 行读 active workdir，让 webui 会话级 workdir 正确反映。
         """
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         lines = [
             "# Runtime context",
             f"Date: {now}",
-            f"Workdir: {self.workdir}",
+            f"Workdir: {self._active_workdir()}",
             f"Cwd: {Path.cwd()}",
             f"Platform: {_platform.system()} {_platform.release()} / "
             f"Python {sys.version.split()[0]}",
