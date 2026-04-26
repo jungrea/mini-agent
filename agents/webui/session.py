@@ -145,8 +145,24 @@ def serialize_content(content: Any) -> Any:
                     "name": getattr(block, "name", ""),
                     "input": getattr(block, "input", {}) or {},
                 })
+            elif btype == "thinking":
+                # extended thinking：保留原始 thinking 文本 + signature。
+                # 注意：本项目重启后走"双轨 history"，老 thinking 不会再回传
+                # 给 API（避免 signature 失效报 400），但把字段保住有两个好处：
+                #   1) 未来切策略想回传时不丢信息
+                #   2) 前端若想渲染"思考摘要"也有数据
+                out.append({
+                    "type": "thinking",
+                    "thinking": getattr(block, "thinking", ""),
+                    "signature": getattr(block, "signature", ""),
+                })
+            elif btype == "redacted_thinking":
+                out.append({
+                    "type": "redacted_thinking",
+                    "data": getattr(block, "data", ""),
+                })
             else:
-                # 其他未知块类型（thinking / image 等）尽量转 dict
+                # 其他未知块类型（image 等）尽量转 dict
                 out.append({"type": btype or "unknown", "repr": str(block)})
         return out
     return str(content)
@@ -173,7 +189,8 @@ class Session:
     def __init__(self, id: str, title: str, mode: str = "default",
                  history: Optional[list] = None,
                  hooks: Optional[HookManager] = None,
-                 workdir: Optional[str] = None) -> None:
+                 workdir: Optional[str] = None,
+                 display_history: Optional[list] = None) -> None:
         if mode not in MODES:
             mode = "default"
         self.id: str = id
@@ -192,6 +209,16 @@ class Session:
             # 退化到项目根；用户可以通过新建会话切走
             self.workdir_path = None
 
+        # ---- 双轨 history ----
+        # display_history：仅用于前端渲染 + 磁盘持久化；NEVER 回传给 Anthropic API
+        #                  —— 避免老 thinking 块缺失 signature / 旧 tool_use 配对
+        #                  失配等跨进程上下文问题导致的 400。
+        # history (live)  ：真正送给 agent_loop 的上下文。
+        #                  启动/载入时**始终为空**——"切到历史对话框等价于新开
+        #                  一个同 workdir 的对话"。本轮产生的新消息会追加到这里，
+        #                  并在一轮结束时同步 append 到 display_history 里落盘。
+        self.display_history: list = display_history if display_history is not None \
+            else (history or [])
         self.history: list = history or []
         self.events: EventBus = EventBus()
         self.usage: SessionUsage = SessionUsage()
@@ -340,7 +367,9 @@ class Session:
             "mode": self.mode,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "message_count": len(self.history),
+            # message_count 反映"展示面板里的条数"——以 display_history 为准。
+            # live history 只是当前进程这一次的上下文，对用户不可见。
+            "message_count": len(self.display_history),
             "state": self.state(),
             # workdir：None 表示用全局项目根；前端拿到后渲染顶部小标签
             "workdir": str(self.workdir_path) if self.workdir_path else None,
@@ -350,7 +379,8 @@ class Session:
     def to_dict_full(self) -> dict:
         return {
             **self.to_meta(),
-            "history": [serialize_message(m) for m in self.history],
+            # 前端渲染用 display_history（跨重启的完整可见历史）。
+            "history": [serialize_message(m) for m in self.display_history],
             "usage": self.usage.to_dict(),
         }
 
@@ -417,8 +447,10 @@ class Session:
         """驱动一轮 agent_loop，把新增事件推给前端。"""
         self._set_state("running")
         self.history.append({"role": "user", "content": user_text})
-        # user_message 前端已本地回显，这里 marker 取 append 之后，避免再推一次
-        marker = len(self.history)
+        # user_message 前端已本地回显，这里 marker 取 append 之后，避免再推一次。
+        # marker_live 是"live history 上 user 之后的位置"——
+        # _publish_tail 只推送 agent_loop 产生的后续 assistant / tool_result。
+        marker_live = len(self.history)
         self.events.publish(Event(
             type=EventType.USER_MESSAGE, session_id=self.id,
             data={"content": user_text, "ts": time.time()},
@@ -538,7 +570,16 @@ class Session:
                 CURRENT_WORKDIR.reset(wd_token)
 
         # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的 tool_use / tool_result）
-        self._publish_tail(marker, pushed_tool_use_ids, pushed_tool_result_ids)
+        self._publish_tail(marker_live, pushed_tool_use_ids, pushed_tool_result_ids)
+
+        # === 把本轮 live 新增同步到 display_history ===
+        # live history 是"本进程生命周期内的上下文"；display_history 是"跨重启
+        # 的可见历史"。一轮结束后，user 消息 + assistant 产物 + tool_result 都
+        # 应当进入展示流，持久化后下次切回本会话仍能看到今天的对话。
+        # 注意 marker_live 比 marker_display 少一条（user 消息还未进 display），
+        # 所以从 marker_live - 1 开始拷贝，正好包含 user 本身。
+        tail = self.history[marker_live - 1:]
+        self.display_history.extend(tail)
 
         after = snapshot_global()
         self.usage.apply_diff(before, after)
@@ -651,8 +692,11 @@ class Session:
         self._set_state("idle")
 
     def _run_clear(self, hard: str) -> None:
-        n = len(self.history)
+        # /clear 语义：同时清 live（下一轮的上下文）和 display（展示给用户的面板）
+        # 这样用户看到的"清空"与真实上下文保持一致。
+        n = len(self.display_history)
         self.history[:] = []
+        self.display_history[:] = []
         extras: list[str] = []
         if hard == "hard":
             self.usage.reset()

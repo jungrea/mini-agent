@@ -151,7 +151,9 @@ class SessionManager:
             "updated_at": sess.updated_at,
             # workdir 写绝对路径字符串；None 表示用全局项目根
             "workdir": str(sess.workdir_path) if sess.workdir_path else None,
-            "history": [serialize_message(m) for m in sess.history],
+            # 落盘的是 display_history（跨重启的完整可见历史）。
+            # live history 只是当前进程本次的上下文，不持久化。
+            "history": [serialize_message(m) for m in sess.display_history],
         }
         p = SESSIONS_DIR / f"{sess.id}.json"
         tmp = p.with_suffix(".json.tmp")
@@ -172,11 +174,17 @@ class SessionManager:
             raw = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
+        # 关键：磁盘 history 只填入 display_history，live history 留空。
+        # 效果 = "切到这个历史会话等价于新开一个绑定原 workdir 的对话"：
+        #   * 前端照常渲染完整历史（来自 display_history）
+        #   * 下一次发消息时 agent_loop 拿到的是空上下文，彻底避开跨进程
+        #     thinking signature / tool_use↔tool_result 配对等 400 风险。
         sess = Session(
             id=sid,
             title=raw.get("title", sid[:8]),
             mode=raw.get("mode", "default"),
-            history=raw.get("history", []),
+            history=[],
+            display_history=raw.get("history", []),
             hooks=self._hooks,
             workdir=raw.get("workdir"),
         )
