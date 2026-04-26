@@ -199,7 +199,7 @@ input, textarea, select { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   min-height: 0;
 }
-.sidebar-block:first-child { flex: 1 1 50%; }
+.sidebar-block:first-child { flex: 1 1 auto; }
 .sidebar-block:nth-child(2) {
   flex: 1 1 50%;
   border-top: 1px solid var(--border);
@@ -230,6 +230,62 @@ input, textarea, select { font: inherit; color: inherit; }
   list-style: none; margin: 0; padding: 0;
   overflow-y: auto; min-height: 0; flex: 1;
 }
+
+/* ===== 会话按工作区分组 ===== */
+.wd-group { list-style: none; margin: 0 0 6px; }
+.wd-group-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.wd-group-head:hover { background: var(--bg-2); color: var(--text-1); }
+.wd-caret {
+  display: inline-block;
+  font-size: 9px;
+  width: 10px;
+  color: var(--text-2);
+  transition: transform .12s ease;
+  flex-shrink: 0;
+}
+.wd-group.collapsed .wd-caret { transform: rotate(-90deg); }
+.wd-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px; height: 14px;
+  color: #f5b301;        /* 文件夹黄；亮/暗主题统一 */
+}
+.wd-icon svg { width: 14px; height: 14px; display: block; }
+.wd-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-1);
+}
+.wd-count {
+  flex-shrink: 0;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  min-width: 18px;
+  text-align: center;
+}
+.wd-group-items {
+  list-style: none; margin: 2px 0 0; padding: 0 0 0 8px;
+  border-left: 1px dashed var(--border);
+  margin-left: 10px;
+}
+.wd-group.collapsed .wd-group-items { display: none; }
 
 .session-item {
   padding: 8px 10px;
@@ -316,11 +372,14 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 
 .msg {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   animation: fadeIn .2s ease-out;
 }
 /* 连续的折叠工具卡挤在一起更紧凑 */
 .msg.tool.collapsed + .msg.tool.collapsed { margin-top: -6px; }
+/* 连续的 assistant 文本块（同一轮被切成多段）压紧间距，
+   避免每段都堆叠 margin + padding 形成"段落组"的大空白 */
+.msg.assistant + .msg.assistant { margin-top: -6px; }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -341,7 +400,7 @@ input, textarea, select { font: inherit; color: inherit; }
 
 .msg.assistant .text {
   color: var(--text-0);
-  padding: 6px 2px;
+  padding: 2px 2px;
   white-space: pre-wrap; word-wrap: break-word;
 }
 
@@ -356,14 +415,34 @@ input, textarea, select { font: inherit; color: inherit; }
 .md-body > *:first-child { margin-top: 0; }
 .md-body > *:last-child  { margin-bottom: 0; }
 
+/* 相邻块级元素之间的间距压缩——避免上下 margin 累计导致行距过大 */
+.md-body p + p,
+.md-body p + ul,
+.md-body p + ol,
+.md-body ul + p,
+.md-body ol + p,
+.md-body p + pre.code-block,
+.md-body pre.code-block + p,
+.md-body ul + ul,
+.md-body ol + ol,
+.md-body ul + ol,
+.md-body ol + ul,
+.md-body p + blockquote,
+.md-body blockquote + p,
+.md-body p + table.md-table,
+.md-body table.md-table + p,
+.md-body pre.code-block + pre.code-block {
+  margin-top: 0.2em;
+}
+
 .md-body p {
-  margin: 0.4em 0;
-  line-height: 1.55;
+  margin: 0.25em 0;
+  line-height: 1.5;
 }
 
 .md-body h1, .md-body h2, .md-body h3,
 .md-body h4, .md-body h5, .md-body h6 {
-  margin: 0.9em 0 0.4em;
+  margin: 0.6em 0 0.25em;
   line-height: 1.3;
   color: var(--text-0);
   font-weight: 600;
@@ -375,13 +454,13 @@ input, textarea, select { font: inherit; color: inherit; }
 .md-body h5, .md-body h6 { font-size: 0.95em; color: var(--text-2); }
 
 .md-body ul, .md-body ol {
-  margin: 0.4em 0;
+  margin: 0.25em 0;
   padding-left: 1.6em;
 }
-.md-body li { margin: 0.15em 0; line-height: 1.55; }
+.md-body li { margin: 0.1em 0; line-height: 1.5; }
 
 .md-body blockquote {
-  margin: 0.5em 0;
+  margin: 0.35em 0;
   padding: 4px 10px;
   border-left: 3px solid var(--accent);
   background: var(--bg-2);
@@ -412,7 +491,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* 代码块（围栏 ``` 生成的 <pre class="code-block">） */
 .md-body pre.code-block {
   position: relative;
-  margin: 0.6em 0;
+  margin: 0.4em 0;
   padding: 10px 12px;
   background: var(--bg-1);
   border: 1px solid var(--border);
@@ -442,7 +521,7 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 
 .md-body hr {
-  margin: 0.8em 0;
+  margin: 0.5em 0;
   border: 0;
   border-top: 1px solid var(--border);
 }
@@ -450,7 +529,7 @@ input, textarea, select { font: inherit; color: inherit; }
 /* 表格（GFM） */
 .md-body table.md-table {
   border-collapse: collapse;
-  margin: 0.6em 0;
+  margin: 0.4em 0;
   font-size: 13px;
   max-width: 100%;
   display: block;

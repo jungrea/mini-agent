@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>mini-agent WebUI</title>
-<link rel="stylesheet" href="/static/css/app.css?v=13" />
+<link rel="stylesheet" href="/static/css/app.css?v=16" />
 <script>
   // 主题首帧防闪烁：在样式应用前把上次选择写到 <html data-theme>。
   // localStorage 可能被浏览器禁用（隐私模式等），做好容错。
@@ -62,19 +62,6 @@
         <button id="newSessionBtn" class="btn-primary">+ 新建</button>
       </div>
       <ul id="sessionList" class="session-list"></ul>
-    </section>
-
-    <section class="sidebar-block">
-      <div class="sidebar-head">
-        <span>定时任务</span>
-        <div>
-          <button id="cronRefreshBtn" class="btn-ghost" title="刷新">⟳</button>
-          <button id="cronTestBtn" class="btn-ghost" title="手动触发测试通知">test</button>
-        </div>
-      </div>
-      <ul id="cronList" class="cron-list"></ul>
-      <div class="cron-log-head">最近 fire 日志</div>
-      <ul id="cronLog" class="cron-log"></ul>
     </section>
   </aside>
 
@@ -204,6 +191,6 @@
 </div>
 
 <!-- ========== Scripts (native ES modules, no build step) ========== -->
-<script type="module" src="/static/js/app.js?v=18"></script>
+<script type="module" src="/static/js/app.js?v=20"></script>
 </body>
 </html>

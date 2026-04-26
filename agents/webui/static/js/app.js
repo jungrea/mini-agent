@@ -10,8 +10,7 @@ import { ws }             from "./ws.js?v=17";
 import { chat }           from "./chat.js?v=18";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
-import { makeSessions }   from "./sessions.js?v=17";
-import { makeCronPanel }  from "./cron_panel.js?v=17";
+import { makeSessions }   from "./sessions.js?v=19";
 import { initSlash }      from "./slash.js?v=17";
 import { permission }     from "./permission.js?v=17";
 import { phase }          from "./phase.js?v=17";
@@ -19,7 +18,12 @@ import { theme }          from "./theme.js?v=17";
 
 let currentSessionId = null;
 let sessionsUI;
-let cronUI;
+// 定时任务侧栏 UI 已移除；保留一个 no-op 占位，让事件分发不必逐处加判空。
+// 用户仍可通过斜杠命令 / 对话方式管理 cron；cron 触发时仍走通知中心。
+const cronUI = {
+  refresh: () => {},
+  appendLog: () => {},
+};
 
 async function init() {
   // -- 主题切换（先于其它 UI 初始化，避免按钮图标闪烁） --
@@ -31,9 +35,7 @@ async function init() {
     onDelete: async (sid) => { try { await api.deleteSession(sid); } catch (e) { alert(e.message); } },
     onRename: async (sid, title) => { try { await api.patchSession(sid, { title }); } catch (e) { alert(e.message); } },
   });
-  cronUI = makeCronPanel();
   await sessionsUI.refresh();
-  await cronUI.refresh();
 
   // -- 输入框 + 发送 --
   const box = document.getElementById("inputBox");
