@@ -36,8 +36,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env，填入 MODEL_ID 以及 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY；
 # 自己做小项目玩建议申请个 deepseek API，便宜好用，直接改模板填 api key 即可。
-# 默认模板使用 deepseek-v4-flash（deepseek-chat/reasoner 将于 2026/07/24 弃用，
-# 届时二者会分别等价于 v4-flash 的非思考 / 思考模式）。
+# 最新默认模型使用 deepseek-v4-flash，最便宜好用
 ```
 
 Python ≥ 3.10（使用了 `Path.is_relative_to`、PEP 604 `X | None` 等新语法）。
