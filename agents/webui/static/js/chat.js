@@ -84,7 +84,9 @@ export const chat = {
         if (typeof msg.content === "string") this.addAssistantText(msg.content);
         else if (Array.isArray(msg.content)) {
           for (const b of msg.content) {
-            if (b.type === "text") this.addAssistantText(b.text);
+            if (b.type === "thinking") this.addThinkingBlock(b.thinking, { collapsed: true });
+            else if (b.type === "redacted_thinking") this.addThinkingBlock("[redacted thinking]", { collapsed: true, redacted: true });
+            else if (b.type === "text") this.addAssistantText(b.text);
             else if (b.type === "tool_use") this.addToolUse(b.id, b.name, b.input, "done");
           }
         }
@@ -103,6 +105,14 @@ export const chat = {
     scrollToBottom();
   },
 
+  acceptAssistantText(text, { streamed = false } = {}) {
+    if (streamed && this._streamedAssistantFinalPending) {
+      this._streamedAssistantFinalPending = false;
+      return;
+    }
+    this.addAssistantText(text);
+  },
+
   addAssistantText(text) {
     if (!text) return;
     // 第一段 assistant 文本出现时，把"思考中"泡泡撤掉
@@ -119,6 +129,95 @@ export const chat = {
     //   - notice 是系统文案不应被误认为 markdown
     el.innerHTML = `<div class="text md-body">${renderMarkdown(text)}</div>`;
     box.appendChild(el);
+    scrollToBottom();
+  },
+
+  startAssistantStream(index = 0) {
+    this.removeTyping();
+    this.hideEmpty();
+    this._streamedAssistantFinalPending = false;
+    if (this._liveAssistantEl) this.finishAssistantStream();
+    const box = document.getElementById("messages");
+    const el = document.createElement("div");
+    el.className = "msg assistant is-streaming";
+    el.dataset.streamIndex = String(index ?? "");
+    el.innerHTML = `<div class="text md-body"></div>`;
+    box.appendChild(el);
+    this._liveAssistantEl = el;
+    this._liveAssistantText = "";
+    scrollToBottom();
+  },
+
+  appendAssistantDelta(text, index = 0) {
+    if (!text) return;
+    if (!this._liveAssistantEl) this.startAssistantStream(index);
+    this._liveAssistantText = (this._liveAssistantText || "") + text;
+    const target = this._liveAssistantEl.querySelector(".text");
+    if (target) target.innerHTML = renderMarkdown(this._liveAssistantText);
+    scrollToBottom();
+  },
+
+  finishAssistantStream() {
+    if (!this._liveAssistantEl) return;
+    this._liveAssistantEl.classList.remove("is-streaming");
+    this._streamedAssistantFinalPending = Boolean(this._liveAssistantText);
+    this._liveAssistantEl = null;
+    this._liveAssistantText = "";
+    scrollToBottom();
+  },
+
+  addThinkingBlock(text, { collapsed = false, redacted = false } = {}) {
+    this.removeTyping();
+    this.hideEmpty();
+    const box = document.getElementById("messages");
+    const el = document.createElement("details");
+    el.className = "msg thinking" + (redacted ? " is-redacted" : "");
+    el.open = !collapsed;
+    el.innerHTML = `
+      <summary>
+        <span class="thinking-caret" aria-hidden="true">▸</span>
+        <span class="thinking-title">思考过程</span>
+        <span class="thinking-status"></span>
+      </summary>
+      <pre class="thinking-content"></pre>
+    `;
+    el.querySelector(".thinking-content").textContent = redacted ? (text || "[redacted thinking]") : (text || "");
+    box.appendChild(el);
+    scrollToBottom();
+    return el;
+  },
+
+  startThinking(index = 0, { redacted = false } = {}) {
+    this.removeTyping();
+    this.hideEmpty();
+    if (this._liveThinkingEl) this.finishThinking();
+    const el = this.addThinkingBlock("", { collapsed: false, redacted });
+    this._liveThinkingEl = el;
+    this._liveThinkingText = "";
+    if (el) {
+      el.classList.add("is-streaming");
+      el.dataset.streamIndex = String(index ?? "");
+      const status = el.querySelector(".thinking-status");
+      if (status) status.textContent = "生成中";
+    }
+  },
+
+  appendThinkingDelta(text, index = 0) {
+    if (!text) return;
+    if (!this._liveThinkingEl) this.startThinking(index);
+    this._liveThinkingText = (this._liveThinkingText || "") + text;
+    const target = this._liveThinkingEl && this._liveThinkingEl.querySelector(".thinking-content");
+    if (target) target.textContent = this._liveThinkingText;
+    scrollToBottom();
+  },
+
+  finishThinking() {
+    if (!this._liveThinkingEl) return;
+    this._liveThinkingEl.classList.remove("is-streaming");
+    const status = this._liveThinkingEl.querySelector(".thinking-status");
+    if (status) status.textContent = "";
+    this._liveThinkingEl = null;
+    this._liveThinkingText = "";
     scrollToBottom();
   },
 

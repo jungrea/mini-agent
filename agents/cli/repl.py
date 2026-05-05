@@ -79,6 +79,7 @@ _MODE_DESCRIPTIONS: dict[str, str] = {
 # ANSI 控制序列（仅提示符/文本输出相关，键盘与菜单的常量在 ui.py 里）
 _ANSI_CYAN: str = "\033[36m"
 _ANSI_GREEN: str = "\033[32m"
+_ANSI_DIM: str = "\033[2m"
 _ANSI_RESET: str = "\033[0m"
 
 # REPL 输入提示符。
@@ -415,6 +416,54 @@ def _print_last_assistant(history: list[Any]) -> None:
         return
 
 
+def _make_repl_progress(state: dict[str, Any]) -> Callable[[str, dict], None]:
+    """把 agent_loop 的流式 progress 事件打印到终端。"""
+    def _close_thinking() -> None:
+        if state.get("thinking_open"):
+            print(f"\n{_ANSI_DIM}[/thinking]{_ANSI_RESET}\n", flush=True)
+            state["thinking_open"] = False
+
+    def _progress(event: str, payload: dict) -> None:
+        if event == "thinking_start":
+            if not state.get("thinking_open"):
+                print(f"\n{_ANSI_DIM}[thinking]{_ANSI_RESET}", flush=True)
+                state["thinking_open"] = True
+                state["thinking"] = True
+        elif event == "thinking_delta":
+            text = payload.get("thinking", "")
+            if not text:
+                return
+            if not state.get("thinking_open"):
+                _progress("thinking_start", {})
+            print(f"{_ANSI_DIM}{text}{_ANSI_RESET}", end="", flush=True)
+        elif event == "thinking_end":
+            _close_thinking()
+        elif event == "assistant_start":
+            _close_thinking()
+            state["assistant_open"] = True
+        elif event == "assistant_delta":
+            text = payload.get("text", "")
+            if not text:
+                return
+            _close_thinking()
+            state["assistant"] = True
+            state["assistant_open"] = True
+            print(f"{_ANSI_GREEN}{text}{_ANSI_RESET}", end="", flush=True)
+        elif event == "assistant_end":
+            if state.get("assistant_open", True) and state.get("assistant"):
+                print(flush=True)
+                state["assistant_open"] = False
+        elif event == "llm_fallback":
+            _close_thinking()
+            print(f"\n[warn] {payload.get('message') or 'LLM 请求已自动降级重试。'}", flush=True)
+        elif event == "cancelled":
+            _close_thinking()
+            print(f"\n[已停止: {payload.get('stage', '?')}]", flush=True)
+
+    state["close_thinking"] = _close_thinking
+    return _progress
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
@@ -560,8 +609,13 @@ def run_repl(mode: str | None = None) -> None:
 
         # 普通对话：作为 user 消息驱动一轮 agent_loop
         history.append({"role": "user", "content": query})
-        agent_loop(history, perms, hooks=hooks)
-        _print_last_assistant(history)
+        stream_state: dict[str, Any] = {"assistant": False, "thinking": False}
+        agent_loop(history, perms, hooks=hooks, progress=_make_repl_progress(stream_state))
+        close_thinking = stream_state.get("close_thinking")
+        if callable(close_thinking):
+            close_thinking()
+        if not stream_state.get("assistant"):
+            _print_last_assistant(history)
         # 每轮回答结束打一次 HUD：让用户能看到"这轮消耗了多少 token"。
         # 注意：不在下一轮提示符前重复刷（避免屏幕上出现两条完全相同的 HUD）。
         print(format_hud())

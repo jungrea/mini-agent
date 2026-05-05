@@ -16,18 +16,10 @@ webui/session —— 单个对话会话：独立 history、独立 perms、独立
         persist()
 
 关键补丁：
-    * agent_loop 内部不直接发 SSE 事件；我们通过"hook 补丁"+"monkey patch"
-      两种方式都不优雅。更干净的做法是：
-      —— 让 worker 在每轮结束后扫 history 新增的部分并 publish 对应事件
-      由于 agent_loop 一轮内可能执行多次 LLM + 多个工具，前端用户体验要求
-      每个工具结果出来就能看到；因此我们在 worker 里**把单轮拆成观察-发布**：
-      agent_loop 返回时一次性 publish 历史尾部的所有新事件。对本地场景够用，
-      实现简单、零侵入 agent_loop。
-
-      （进一步的真·流式推送需要给 agent_loop 增加 on_event 回调；为保持
-       最小侵入，当前版本只做"每轮末尾一次性推"——多个工具结果会同时出现，
-       但响应体感仍优于等整轮完全结束——因为每条 user 消息触发的一轮
-       agent_loop 本身就是"多个 LLM 往返"的整体。）
+    * agent_loop 通过 progress 回调实时上报 LLM / thinking / 工具事件；
+      WebUI worker 只负责把这些 progress 事件转成 SSE。
+    * agent_loop 返回后仍会扫 history 新增尾部，用于补发非流式路径或异常
+      漏掉的 assistant/tool_result，同时跳过已通过 progress 推过的片段，避免重复。
 
 权限交互：
     perms = PermissionManager(mode, ask_callback=self._ask_user)
@@ -461,8 +453,11 @@ class Session:
         # 之后 _publish_tail 扫到同 id 的 tool_use / tool_result 就跳过。
         pushed_tool_use_ids: set[str] = set()
         pushed_tool_result_ids: set[str] = set()
+        streamed_assistant_seen = False
+        streamed_thinking_seen = False
 
         def _progress(event: str, payload: dict) -> None:
+            nonlocal streamed_assistant_seen, streamed_thinking_seen
             try:
                 if event == "llm_start":
                     self.events.publish(Event(
@@ -476,6 +471,54 @@ class Session:
                     self.events.publish(Event(
                         type=EventType.LLM_END, session_id=self.id,
                         data={"stop_reason": payload.get("stop_reason")},
+                    ))
+                elif event == "assistant_start":
+                    self.events.publish(Event(
+                        type=EventType.ASSISTANT_START, session_id=self.id,
+                        data={"index": payload.get("index")},
+                    ))
+                elif event == "assistant_delta":
+                    text = payload.get("text", "")
+                    if text:
+                        streamed_assistant_seen = True
+                        self.events.publish(Event(
+                            type=EventType.ASSISTANT_DELTA, session_id=self.id,
+                            data={"index": payload.get("index"), "text": text},
+                        ))
+                elif event == "assistant_end":
+                    self.events.publish(Event(
+                        type=EventType.ASSISTANT_END, session_id=self.id,
+                        data={"index": payload.get("index")},
+                    ))
+                elif event == "thinking_start":
+                    streamed_thinking_seen = True
+                    self.events.publish(Event(
+                        type=EventType.THINKING_START, session_id=self.id,
+                        data={
+                            "index": payload.get("index"),
+                            "redacted": payload.get("redacted", False),
+                        },
+                    ))
+                elif event == "thinking_delta":
+                    thinking = payload.get("thinking", "")
+                    if thinking:
+                        streamed_thinking_seen = True
+                        self.events.publish(Event(
+                            type=EventType.THINKING_DELTA, session_id=self.id,
+                            data={"index": payload.get("index"), "thinking": thinking},
+                        ))
+                elif event == "thinking_end":
+                    self.events.publish(Event(
+                        type=EventType.THINKING_END, session_id=self.id,
+                        data={"index": payload.get("index")},
+                    ))
+                elif event == "llm_fallback":
+                    self.events.publish(Event(
+                        type=EventType.NOTICE, session_id=self.id,
+                        data={
+                            "level": "warn",
+                            "text": payload.get("message") or "LLM 请求已自动降级重试。",
+                        },
                     ))
                 elif event == "tool_start":
                     tid = payload.get("id", "")
@@ -569,8 +612,14 @@ class Session:
             if wd_token is not None:
                 CURRENT_WORKDIR.reset(wd_token)
 
-        # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的 tool_use / tool_result）
-        self._publish_tail(marker_live, pushed_tool_use_ids, pushed_tool_result_ids)
+        # 把 marker 之后新增的 history 片段 publish 给前端（跳过已经流推过的片段）
+        self._publish_tail(
+            marker_live,
+            pushed_tool_use_ids,
+            pushed_tool_result_ids,
+            skip_assistant_text=streamed_assistant_seen,
+            skip_thinking=streamed_thinking_seen,
+        )
 
         # === 把本轮 live 新增同步到 display_history ===
         # live history 是"本进程生命周期内的上下文"；display_history 是"跨重启
@@ -607,7 +656,9 @@ class Session:
 
     def _publish_tail(self, from_index: int,
                       skip_tool_use_ids: set = None,
-                      skip_tool_result_ids: set = None) -> None:
+                      skip_tool_result_ids: set = None,
+                      skip_assistant_text: bool = False,
+                      skip_thinking: bool = False) -> None:
         """
         扫 history[from_index:]，按类型把每条 content 拆成事件发出去。
 
@@ -615,6 +666,8 @@ class Session:
                               这里遇到同 id 的 tool_use block 就跳过，避免重复渲染。
         skip_tool_result_ids: 已在 progress tool_end 里流式推给前端的 tool_use id 集合；
                               这里遇到同 id 的 tool_result block 就跳过。
+        skip_assistant_text / skip_thinking:
+                              已通过 assistant_delta / thinking_delta 推过时跳过最终完整块。
         """
         skip_use = skip_tool_use_ids or set()
         skip_res = skip_tool_result_ids or set()
@@ -655,9 +708,42 @@ class Session:
                     for b in blocks:
                         btype = b.get("type")
                         if btype == "text":
+                            # 即使已流式推过，也补一条最终 assistant_text。
+                            # 新前端会用 streamed=True 去重；旧前端不认识 delta 事件时仍能看到最终回答。
                             self.events.publish(Event(
                                 type=EventType.ASSISTANT_TEXT, session_id=self.id,
-                                data={"text": b.get("text", "")},
+                                data={
+                                    "text": b.get("text", ""),
+                                    "streamed": skip_assistant_text,
+                                },
+                            ))
+                        elif btype == "thinking":
+                            if skip_thinking:
+                                continue
+                            self.events.publish(Event(
+                                type=EventType.THINKING_START, session_id=self.id,
+                                data={"redacted": False},
+                            ))
+                            self.events.publish(Event(
+                                type=EventType.THINKING_DELTA, session_id=self.id,
+                                data={"thinking": b.get("thinking", "")},
+                            ))
+                            self.events.publish(Event(
+                                type=EventType.THINKING_END, session_id=self.id, data={},
+                            ))
+                        elif btype == "redacted_thinking":
+                            if skip_thinking:
+                                continue
+                            self.events.publish(Event(
+                                type=EventType.THINKING_START, session_id=self.id,
+                                data={"redacted": True},
+                            ))
+                            self.events.publish(Event(
+                                type=EventType.THINKING_DELTA, session_id=self.id,
+                                data={"thinking": "[redacted thinking]"},
+                            ))
+                            self.events.publish(Event(
+                                type=EventType.THINKING_END, session_id=self.id, data={},
                             ))
                         elif btype == "tool_use":
                             tid = b.get("id")
@@ -676,7 +762,7 @@ class Session:
                     if blocks != "Noted.":
                         self.events.publish(Event(
                             type=EventType.ASSISTANT_TEXT, session_id=self.id,
-                            data={"text": blocks},
+                            data={"text": blocks, "streamed": skip_assistant_text},
                         ))
 
     # ---------------- 斜杠命令在 worker 里执行（需要操作 history） ----------------

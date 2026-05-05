@@ -36,7 +36,14 @@ from typing import Any, Callable, Iterator, Optional
 
 from ..managers.compression import auto_compact, estimate_tokens, microcompact
 from ..permissions.manager import PermissionManager
-from .config import MODEL, TOKEN_THRESHOLD, client
+from .config import (
+    LLM_STREAM,
+    LLM_THINKING,
+    LLM_THINKING_BUDGET,
+    MODEL,
+    TOKEN_THRESHOLD,
+    client,
+)
 from .dispatch import PARALLEL_SAFE, TOOL_HANDLERS, TOOLS
 from .hooks import HookManager
 from .normalize import normalize_messages
@@ -192,6 +199,158 @@ def _flush_admitted_to_results(admitted: list[dict],
     return used_todo
 
 
+def _llm_request_args(system_text: str,
+                      messages: list,
+                      include_thinking: bool = True) -> dict[str, Any]:
+    """组装 Anthropic messages.create / messages.stream 共用参数。"""
+    args: dict[str, Any] = {
+        "model": MODEL,
+        "system": system_text,
+        "messages": normalize_messages(messages),
+        "tools": TOOLS,
+        "max_tokens": 8000,
+    }
+    if include_thinking and LLM_THINKING in {"1", "true", "yes", "on", "enabled"}:
+        args["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": max(1024, LLM_THINKING_BUDGET),
+        }
+    return args
+
+
+def _emit_stream_event(event: Any,
+                       progress: Optional[ProgressCallback],
+                       active_blocks: dict[int, str],
+                       raw_delta_seen: set[str]) -> None:
+    """把 Anthropic SDK stream event 归一成前端无关的 progress 事件。"""
+    etype = getattr(event, "type", "")
+    index = getattr(event, "index", None)
+    if index is None:
+        index = -1
+
+    # 兼容 Anthropic SDK 的高层 convenience events。
+    # 有些环境可能只暴露 text/thinking，不暴露底层 content_block_delta；
+    # 若已看到 raw delta，则跳过高层事件，避免同一 chunk 重复渲染。
+    if etype == "text" and "yes" not in raw_delta_seen:
+        text = getattr(event, "text", "") or ""
+        if text:
+            if active_blocks.get(index) != "assistant":
+                active_blocks[index] = "assistant"
+                _safe_call(progress, "assistant_start", {"index": index})
+            _safe_call(progress, "assistant_delta", {"index": index, "text": text})
+        return
+
+    if etype == "thinking" and "yes" not in raw_delta_seen:
+        thinking = getattr(event, "thinking", "") or ""
+        if thinking:
+            if active_blocks.get(index) != "thinking":
+                active_blocks[index] = "thinking"
+                _safe_call(progress, "thinking_start", {"index": index, "redacted": False})
+            _safe_call(progress, "thinking_delta", {"index": index, "thinking": thinking})
+        return
+
+    if etype == "content_block_start":
+        block = getattr(event, "content_block", None)
+        btype = getattr(block, "type", None)
+        if btype in {"thinking", "redacted_thinking"}:
+            active_blocks[index] = "thinking"
+            _safe_call(progress, "thinking_start", {
+                "index": index,
+                "redacted": btype == "redacted_thinking",
+            })
+        elif btype == "text":
+            active_blocks[index] = "assistant"
+            _safe_call(progress, "assistant_start", {"index": index})
+        return
+
+    if etype == "content_block_delta":
+        raw_delta_seen.add("yes")
+        delta = getattr(event, "delta", None)
+        dtype = getattr(delta, "type", None)
+        if dtype == "text_delta":
+            text = getattr(delta, "text", "") or ""
+            if text:
+                if active_blocks.get(index) != "assistant":
+                    active_blocks[index] = "assistant"
+                    _safe_call(progress, "assistant_start", {"index": index})
+                _safe_call(progress, "assistant_delta", {"index": index, "text": text})
+        elif dtype == "thinking_delta":
+            thinking = getattr(delta, "thinking", "") or ""
+            if thinking:
+                if active_blocks.get(index) != "thinking":
+                    active_blocks[index] = "thinking"
+                    _safe_call(progress, "thinking_start", {"index": index, "redacted": False})
+                _safe_call(progress, "thinking_delta", {
+                    "index": index,
+                    "thinking": thinking,
+                })
+        elif dtype == "signature_delta":
+            signature = getattr(delta, "signature", "") or ""
+            if signature:
+                _safe_call(progress, "thinking_signature", {
+                    "index": index,
+                    "signature": signature,
+                })
+        return
+
+    if etype == "content_block_stop":
+        kind = active_blocks.pop(index, None)
+        if kind == "assistant":
+            _safe_call(progress, "assistant_end", {"index": index})
+        elif kind == "thinking":
+            _safe_call(progress, "thinking_end", {"index": index})
+
+
+def _call_llm(system_text: str,
+              messages: list,
+              progress: Optional[ProgressCallback]) -> Any:
+    """统一 LLM 调用入口：按配置走同步 create 或 token 级 stream。"""
+    use_stream = LLM_STREAM and progress is not None and hasattr(client.messages, "stream")
+
+    def _close_blocks(active_blocks: dict[int, str]) -> None:
+        # 防御：正常 SDK 会发 content_block_stop；若兼容网关漏发，避免前端 live block 悬挂。
+        for index, kind in list(active_blocks.items()):
+            if kind == "assistant":
+                _safe_call(progress, "assistant_end", {"index": index})
+            elif kind == "thinking":
+                _safe_call(progress, "thinking_end", {"index": index})
+            active_blocks.pop(index, None)
+
+    def _run(include_thinking: bool) -> Any:
+        args = _llm_request_args(system_text, messages, include_thinking=include_thinking)
+        _safe_call(progress, "llm_start", {
+            "stream": use_stream,
+            "thinking": "thinking" in args,
+        })
+        if not use_stream:
+            with _spinning("思考中…"):
+                return client.messages.create(**args)
+
+        active_blocks: dict[int, str] = {}
+        raw_delta_seen: set[str] = set()
+        try:
+            with client.messages.stream(**args) as stream:
+                for event in stream:
+                    _emit_stream_event(event, progress, active_blocks, raw_delta_seen)
+                return stream.get_final_message()
+        finally:
+            _close_blocks(active_blocks)
+
+    try:
+        return _run(include_thinking=True)
+    except Exception:
+        # 某些 Anthropic-compatible 网关不支持 thinking 参数，或支持不稳定。
+        # 开启 LLM_THINKING=enabled 时若首轮失败，自动降级为不带 thinking 重试，
+        # 避免 WebUI 直接进入错误态。非 thinking 请求仍原样抛出。
+        if LLM_THINKING not in {"1", "true", "yes", "on", "enabled"}:
+            raise
+        _safe_call(progress, "llm_fallback", {
+            "reason": "thinking_failed",
+            "message": "thinking 请求失败，已自动回退为普通流式输出。",
+        })
+        return _run(include_thinking=False)
+
+
 def agent_loop(messages: list,
                perms: PermissionManager | None = None,
                hooks: HookManager | None = None,
@@ -208,7 +367,9 @@ def agent_loop(messages: list,
         progress: 可选的细粒度进度回调（webui 等前端用）。None 时完全无影响。
                   事件类型（event name）：
                       * "round_start"   —— 一轮新的 LLM 交互开始
-                      * "llm_start"     —— 即将发起 messages.create
+                      * "llm_start"     —— 即将发起 LLM 调用；payload 带 stream
+                      * "assistant_start"/"assistant_delta"/"assistant_end" —— 正文流式输出
+                      * "thinking_start"/"thinking_delta"/"thinking_end" —— 思考过程流式输出
                       * "llm_end"       —— LLM 返回；payload 带 stop_reason
                       * "tool_start"    —— 某个工具即将执行；payload: {id, name, input}
                       * "tool_end"      —— 某个工具执行结束；payload: {id, name, duration_ms, output_preview}
@@ -304,19 +465,11 @@ def agent_loop(messages: list,
         # 不变，但 dynamic 段会反映当前日期、cwd、权限模式。重建成本 <1ms，
         # 不做缓存；这也是 s10 DYNAMIC_BOUNDARY 思想的落地——稳定与动态分离。
         system_text = BUILDER.build(mode=perms.mode if perms else None)
-        _safe_call(progress, "llm_start", {})
-        with _spinning("思考中…"):
-            # normalize_messages 是出门安检：保证 messages 结构合法
-            # （tool_use ↔ tool_result 配对、tool_result 在 user 内容前部、
-            #  无空 content、剥内部字段）。源头 bug 仍应在 loop 自己里修；
-            #  这里只是把"漏网"的小错降级为"打日志 + 静默修复"，避免直接 400。
-            response = client.messages.create(
-                model=MODEL,
-                system=system_text,
-                messages=normalize_messages(messages),
-                tools=TOOLS,
-                max_tokens=8000,
-            )
+        # normalize_messages 是出门安检：保证 messages 结构合法
+        # （tool_use ↔ tool_result 配对、tool_result 在 user 内容前部、
+        #  无空 content、剥内部字段）。源头 bug 仍应在 loop 自己里修；
+        #  这里只是把"漏网"的小错降级为"打日志 + 静默修复"，避免直接 400。
+        response = _call_llm(system_text, messages, progress)
         # 记录本轮 token 用量：repl HUD 会读这里的累计数据
         USAGE.record(getattr(response, "usage", None))
         messages.append({"role": "assistant", "content": response.content})

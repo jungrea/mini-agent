@@ -29,6 +29,12 @@ class EventType:
     # 对话流
     USER_MESSAGE    = "user_message"
     ASSISTANT_TEXT  = "assistant_text"
+    ASSISTANT_START = "assistant_start"
+    ASSISTANT_DELTA = "assistant_delta"
+    ASSISTANT_END   = "assistant_end"
+    THINKING_START  = "thinking_start"
+    THINKING_DELTA  = "thinking_delta"
+    THINKING_END    = "thinking_end"
     TOOL_USE        = "tool_use"
     TOOL_RESULT     = "tool_result"
     ROUND_END       = "round_end"

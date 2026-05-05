@@ -70,6 +70,25 @@ client: Anthropic = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL: str = os.environ["MODEL_ID"]
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# LLM_STREAM：统一控制 agent_loop 是否使用 Anthropic SDK 的 messages.stream。
+# 默认开启；如遇到不支持 stream 的兼容网关，可在 .env 里设为 false 回退旧路径。
+LLM_STREAM: bool = _env_bool("LLM_STREAM", True)
+
+# LLM_THINKING：off | enabled。开启后会向支持 extended thinking 的模型传 thinking 参数。
+LLM_THINKING: str = os.getenv("LLM_THINKING", "off").strip().lower()
+try:
+    LLM_THINKING_BUDGET: int = int(os.getenv("LLM_THINKING_BUDGET", "4096"))
+except ValueError:
+    LLM_THINKING_BUDGET = 4096
+
+
 # --- 3) 落盘目录 ------------------------------------------------------------
 
 # 团队协作：成员配置 + 收件箱

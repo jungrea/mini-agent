@@ -1,13 +1,13 @@
 // app.js —— 应用入口，串联所有模块。
 //
 // 每个子模块的 import URL 都带上同一个 ?v= 版本号，绕过浏览器对 ES module
-// 的强缓存。修改任何 js 模块后，把 ?v=17 改成新值并同步更新 index.html 里
-// 主入口 app.js?v=17 的值（保持一致），浏览器会重新下载所有模块。
+// 的强缓存。修改任何 js 模块后，递增对应 import 的 ?v= 版本号；若改了
+// app.js 自身，同步更新 index.html 里的主入口 app.js?v=，浏览器会重新下载模块。
 
 import { api }            from "./api.js?v=17";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=18";
+import { chat }           from "./chat.js?v=20";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";
@@ -526,7 +526,25 @@ function handleSessionEvent(ev) {
     case "user_message":
       break;
     case "assistant_text":
-      chat.addAssistantText(data.text);
+      chat.acceptAssistantText(data.text, { streamed: Boolean(data.streamed) });
+      break;
+    case "assistant_start":
+      chat.startAssistantStream(data.index);
+      break;
+    case "assistant_delta":
+      chat.appendAssistantDelta(data.text, data.index);
+      break;
+    case "assistant_end":
+      chat.finishAssistantStream(data.index);
+      break;
+    case "thinking_start":
+      chat.startThinking(data.index, { redacted: data.redacted });
+      break;
+    case "thinking_delta":
+      chat.appendThinkingDelta(data.thinking, data.index);
+      break;
+    case "thinking_end":
+      chat.finishThinking(data.index);
       break;
     case "tool_use":
       chat.addToolUse(data.id, data.name, data.input, data.status || "running");

@@ -377,7 +377,17 @@ mini-agent/
 规则目前硬编码在 `agents/permissions/manager.py: DEFAULT_RULES`。运行时通过 "always" 选项可以向当前会话追加动态规则（进程级，退出即丢）。要持久化请直接改代码。
 
 **Q：支持流式输出（一个 token 一个 token 显示）吗？**
-当前是"分段流式"：每个工具调用、每次 LLM 往返都会立即推事件给前端。token 级流式需要把 `client.messages.create` 换成 `client.messages.stream()` 并重写 `agent_loop` 的收敛逻辑。
+支持。`agent_loop` 统一使用可选的 `client.messages.stream()`，REPL 和 WebUI 都只消费同一套 progress 事件。
+
+`.env` 相关配置：
+
+```bash
+LLM_STREAM=true              # 开启正文 token 级流式输出
+LLM_THINKING=off             # off | enabled
+LLM_THINKING_BUDGET=4096     # 开启 thinking 时的预算
+```
+
+如果模型/网关支持 extended thinking，可设 `LLM_THINKING=enabled` 显示思考过程；若网关不支持或返回异常，核心循环会自动降级为普通流式输出。修改 `.env` 后需要重启 REPL/WebUI。
 
 **Q：如何接入其他模型？**
 `agents/core/config.py` 里的 `client = Anthropic(base_url=...)` 读 `ANTHROPIC_BASE_URL`，任何兼容 Anthropic API 的网关都能接入（包括通过代理层桥接的 OpenAI / Gemini / 国产模型）。模型名通过 `MODEL_ID` 环境变量注入，代码层只此一个入口——换模型只改 `.env` 即可。`.env.example` 里预置了 DeepSeek / MiniMax / GLM / Kimi 的 base_url 与 model id 模板。
