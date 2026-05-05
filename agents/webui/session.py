@@ -287,7 +287,9 @@ class Session:
               无法打断 Anthropic SDK 的请求；但该请求返回后不会再进入下一轮。
         """
         state = self.state()
-        if state != "running":
+        with self._asks_lock:
+            has_pending_asks = bool(self._pending_asks)
+        if state != "running" and not has_pending_asks:
             return {"accepted": False, "state": state, "reason": "not running"}
 
         self._cancel_requested.set()
@@ -298,6 +300,12 @@ class Session:
             for ask_id, pend in pend_items:
                 pend["answer"] = "deny"
                 pend["event"].set()
+
+        for ask_id, _pend in pend_items:
+            self.events.publish(Event(
+                type=EventType.PERMISSION_RESOLVED, session_id=self.id,
+                data={"ask_id": ask_id, "decision": "deny", "cancelled": True},
+            ))
 
         self.events.publish(Event(
             type=EventType.NOTICE, session_id=self.id,
@@ -332,9 +340,15 @@ class Session:
         self._cancel_requested.set()
         # 唤醒所有 pending 的权限 ask，避免 worker 卡死
         with self._asks_lock:
-            for pend in self._pending_asks.values():
+            pend_items = list(self._pending_asks.items())
+            for _ask_id, pend in pend_items:
                 pend["answer"] = "deny"
                 pend["event"].set()
+        for ask_id, _pend in pend_items:
+            self.events.publish(Event(
+                type=EventType.PERMISSION_RESOLVED, session_id=self.id,
+                data={"ask_id": ask_id, "decision": "deny", "cancelled": True},
+            ))
         self._stop_event.set()
         # 投一个哨兵把 worker 从 queue.get 里唤醒
         self._input_queue.put(("stop", ""))
@@ -369,11 +383,14 @@ class Session:
         }
 
     def to_dict_full(self) -> dict:
+        with self._asks_lock:
+            pending_asks = [dict(p.get("payload", {})) for p in self._pending_asks.values()]
         return {
             **self.to_meta(),
             # 前端渲染用 display_history（跨重启的完整可见历史）。
             "history": [serialize_message(m) for m in self.display_history],
             "usage": self.usage.to_dict(),
+            "pending_permission_asks": pending_asks,
         }
 
     # ---------------- 内部：权限回调 ----------------
@@ -385,27 +402,49 @@ class Session:
         流程：
             1) 生成 ask_id，注册 threading.Event
             2) publish permission_ask 事件给前端
-            3) Event.wait(timeout)：前端 WS 回传后由 resolve_permission_ask 唤醒
+            3) 小步轮询等待：前端回传 / 用户停止 / 超时任一发生即返回
             4) 读答案 → 返回 allow/deny/always
         超时或 stop_event 被 set 时按 deny 处理。
         """
         ask_id = uuid.uuid4().hex[:12]
         ev = threading.Event()
+        payload = {
+            "ask_id": ask_id,
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "timeout_sec": PERMISSION_ASK_TIMEOUT,
+        }
         with self._asks_lock:
-            self._pending_asks[ask_id] = {"event": ev, "answer": "deny"}
+            self._pending_asks[ask_id] = {
+                "event": ev,
+                "answer": "deny",
+                "payload": payload,
+                "created_at": time.time(),
+            }
 
-        self.events.publish(Event(
-            type=EventType.PERMISSION_ASK, session_id=self.id,
-            data={
-                "ask_id": ask_id,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "timeout_sec": PERMISSION_ASK_TIMEOUT,
-            },
-        ))
+        def _publish_ask() -> None:
+            self.events.publish(Event(
+                type=EventType.PERMISSION_ASK, session_id=self.id, data=payload,
+            ))
 
-        # 等待前端或停止信号
-        got = ev.wait(timeout=PERMISSION_ASK_TIMEOUT)
+        _publish_ask()
+
+        # 等待前端或停止信号。不要一次性 wait 180s：若 SSE 瞬断丢了 ask 事件，
+        # 周期性重发可让前端恢复弹窗；若用户点停止但错过 pending set，也能靠 cancel flag 退出。
+        deadline = time.time() + PERMISSION_ASK_TIMEOUT
+        next_republish = time.time() + 2.0
+        got = False
+        while time.time() < deadline:
+            if ev.wait(timeout=0.5):
+                got = True
+                break
+            if self._cancel_requested.is_set() or self._stop_event.is_set():
+                got = True
+                break
+            if time.time() >= next_republish:
+                _publish_ask()
+                next_republish = time.time() + 2.0
+
         with self._asks_lock:
             pend = self._pending_asks.pop(ask_id, None)
         if not got or pend is None:
@@ -415,7 +454,13 @@ class Session:
                 data={"level": "warn",
                       "text": f"权限请求 {tool_name} 超时（{int(PERMISSION_ASK_TIMEOUT)}s），按拒绝处理"},
             ))
+            self.events.publish(Event(
+                type=EventType.PERMISSION_RESOLVED, session_id=self.id,
+                data={"ask_id": ask_id, "decision": "deny", "timeout": True},
+            ))
             return "deny"
+        if self._cancel_requested.is_set() or self._stop_event.is_set():
+            pend["answer"] = "deny"
         return pend["answer"]
 
     # ---------------- 内部：worker ----------------

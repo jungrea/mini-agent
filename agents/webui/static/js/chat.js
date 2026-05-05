@@ -141,28 +141,61 @@ export const chat = {
     const el = document.createElement("div");
     el.className = "msg assistant is-streaming";
     el.dataset.streamIndex = String(index ?? "");
-    el.innerHTML = `<div class="text md-body"></div>`;
+    // 流式过程中先按纯文本渲染，结束时再一次性转 markdown。
+    // 否则每个 token 都 renderMarkdown + innerHTML，会很容易把浏览器主线程打满。
+    el.innerHTML = `<div class="text"></div>`;
     box.appendChild(el);
     this._liveAssistantEl = el;
     this._liveAssistantText = "";
+    this._assistantDeltaBuffer = "";
+    this._assistantFlushTimer = null;
     scrollToBottom();
   },
 
   appendAssistantDelta(text, index = 0) {
     if (!text) return;
     if (!this._liveAssistantEl) this.startAssistantStream(index);
-    this._liveAssistantText = (this._liveAssistantText || "") + text;
+    this._assistantDeltaBuffer = (this._assistantDeltaBuffer || "") + text;
+    this._scheduleAssistantFlush();
+  },
+
+  _scheduleAssistantFlush() {
+    if (this._assistantFlushTimer) return;
+    this._assistantFlushTimer = setTimeout(() => {
+      this._assistantFlushTimer = null;
+      this._flushAssistantDelta(false);
+    }, 80);
+  },
+
+  _flushAssistantDelta(finalRender = false) {
+    if (!this._liveAssistantEl) return;
+    if (this._assistantFlushTimer) {
+      clearTimeout(this._assistantFlushTimer);
+      this._assistantFlushTimer = null;
+    }
+    if (this._assistantDeltaBuffer) {
+      this._liveAssistantText = (this._liveAssistantText || "") + this._assistantDeltaBuffer;
+      this._assistantDeltaBuffer = "";
+    }
     const target = this._liveAssistantEl.querySelector(".text");
-    if (target) target.innerHTML = renderMarkdown(this._liveAssistantText);
+    if (!target) return;
+    if (finalRender) {
+      target.classList.add("md-body");
+      target.innerHTML = renderMarkdown(this._liveAssistantText || "");
+    } else {
+      target.textContent = this._liveAssistantText || "";
+    }
     scrollToBottom();
   },
 
   finishAssistantStream() {
     if (!this._liveAssistantEl) return;
+    this._flushAssistantDelta(true);
     this._liveAssistantEl.classList.remove("is-streaming");
     this._streamedAssistantFinalPending = Boolean(this._liveAssistantText);
     this._liveAssistantEl = null;
     this._liveAssistantText = "";
+    this._assistantDeltaBuffer = "";
     scrollToBottom();
   },
 
@@ -194,6 +227,8 @@ export const chat = {
     const el = this.addThinkingBlock("", { collapsed: false, redacted });
     this._liveThinkingEl = el;
     this._liveThinkingText = "";
+    this._thinkingDeltaBuffer = "";
+    this._thinkingFlushTimer = null;
     if (el) {
       el.classList.add("is-streaming");
       el.dataset.streamIndex = String(index ?? "");
@@ -205,19 +240,42 @@ export const chat = {
   appendThinkingDelta(text, index = 0) {
     if (!text) return;
     if (!this._liveThinkingEl) this.startThinking(index);
-    this._liveThinkingText = (this._liveThinkingText || "") + text;
-    const target = this._liveThinkingEl && this._liveThinkingEl.querySelector(".thinking-content");
-    if (target) target.textContent = this._liveThinkingText;
+    this._thinkingDeltaBuffer = (this._thinkingDeltaBuffer || "") + text;
+    this._scheduleThinkingFlush();
+  },
+
+  _scheduleThinkingFlush() {
+    if (this._thinkingFlushTimer) return;
+    this._thinkingFlushTimer = setTimeout(() => {
+      this._thinkingFlushTimer = null;
+      this._flushThinkingDelta();
+    }, 100);
+  },
+
+  _flushThinkingDelta() {
+    if (!this._liveThinkingEl) return;
+    if (this._thinkingFlushTimer) {
+      clearTimeout(this._thinkingFlushTimer);
+      this._thinkingFlushTimer = null;
+    }
+    if (this._thinkingDeltaBuffer) {
+      this._liveThinkingText = (this._liveThinkingText || "") + this._thinkingDeltaBuffer;
+      this._thinkingDeltaBuffer = "";
+    }
+    const target = this._liveThinkingEl.querySelector(".thinking-content");
+    if (target) target.textContent = this._liveThinkingText || "";
     scrollToBottom();
   },
 
   finishThinking() {
     if (!this._liveThinkingEl) return;
+    this._flushThinkingDelta();
     this._liveThinkingEl.classList.remove("is-streaming");
     const status = this._liveThinkingEl.querySelector(".thinking-status");
     if (status) status.textContent = "";
     this._liveThinkingEl = null;
     this._liveThinkingText = "";
+    this._thinkingDeltaBuffer = "";
     scrollToBottom();
   },
 

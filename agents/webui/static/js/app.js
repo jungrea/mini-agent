@@ -7,7 +7,7 @@
 import { api }            from "./api.js?v=17";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=20";
+import { chat }           from "./chat.js?v=21";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";
@@ -18,6 +18,7 @@ import { theme }          from "./theme.js?v=17";
 
 let currentSessionId = null;
 let sessionsUI;
+let lastPermissionNotifyId = null;
 // 定时任务侧栏 UI 已移除；保留一个 no-op 占位，让事件分发不必逐处加判空。
 // 用户仍可通过斜杠命令 / 对话方式管理 cron；cron 触发时仍走通知中心。
 const cronUI = {
@@ -139,6 +140,9 @@ async function switchSession(sid) {
     setWorkdirTag(detail.workdir, detail.workdir_default);
     chat.renderHistory(detail.history);
     if (detail.usage) hud.update(detail.usage);
+    if (Array.isArray(detail.pending_permission_asks) && detail.pending_permission_asks.length > 0) {
+      permission.show(detail.pending_permission_asks[detail.pending_permission_asks.length - 1]);
+    }
     setInputState(detail.state || "idle");
     // 如果目标会话恰好在跑一轮（例如多标签同时用），给用户一个提示
     if ((detail.state || "idle") === "running") {
@@ -597,13 +601,17 @@ function handleSessionEvent(ev) {
 
     case "permission_ask":
       permission.show(data);
-      notify.show({ level: "warn", title: "权限请求", body: data.tool_name });
+      if (data.ask_id !== lastPermissionNotifyId) {
+        lastPermissionNotifyId = data.ask_id;
+        notify.show({ level: "warn", title: "权限请求", body: data.tool_name });
+      }
       break;
     case "permission_resolved":
       // 只关"对应 ask_id 的弹窗"，避免旧 resolve 事件关掉新弹窗
       // （worker 一轮里可能连续请求多个权限，下一轮的 ASK 可能在上一轮的
       //  RESOLVED 之前到达——此时若无脑 hide() 就会误关新弹窗）
       permission.hide(data && data.ask_id);
+      if (data && data.ask_id === lastPermissionNotifyId) lastPermissionNotifyId = null;
       break;
     case "error":
       chat.addError(data.message || "unknown error");
