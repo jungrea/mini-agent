@@ -97,12 +97,12 @@ export function renderMarkdown(src) {
     // --- 代码块 ```lang ... ``` ---
     // 开头三个反引号被 escape 成 `&#39;`？不——反引号本身不在 escape 列表里，
     // 所以这里的 `\`\`\``` 原样存在。注意：escape 只处理 &<>"'，反引号保留。
-    const fence = line.match(/^```(\w*)\s*$/);
+    const fence = line.match(/^\s{0,3}```\s*([A-Za-z0-9_-]*)\s*$/);
     if (fence) {
       const lang = fence[1] || "";
       const buf = [];
       i += 1;
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+      while (i < lines.length && !/^\s{0,3}```\s*$/.test(lines[i])) {
         buf.push(lines[i]);
         i += 1;
       }
@@ -199,7 +199,7 @@ export function renderMarkdown(src) {
       i < lines.length &&
       !/^\s*$/.test(lines[i]) &&
       !/^#{1,6}\s+/.test(lines[i]) &&
-      !/^```/.test(lines[i]) &&
+      !/^\s{0,3}```/.test(lines[i]) &&
       !/^&gt;\s?/.test(lines[i]) &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i]) &&

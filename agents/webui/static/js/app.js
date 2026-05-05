@@ -7,7 +7,7 @@
 import { api }            from "./api.js?v=17";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=21";
+import { chat }           from "./chat.js?v=23";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";

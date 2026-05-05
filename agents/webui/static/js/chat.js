@@ -1,5 +1,5 @@
 // chat.js —— 对话流渲染。
-import { renderMarkdown } from "./markdown.js?v=18";
+import { renderMarkdown } from "./markdown.js?v=19";
 
 function escapeHTML(s) {
   return String(s == null ? "" : s)
@@ -106,9 +106,18 @@ export const chat = {
   },
 
   acceptAssistantText(text, { streamed = false } = {}) {
-    if (streamed && this._streamedAssistantFinalPending) {
-      this._streamedAssistantFinalPending = false;
-      return;
+    if (streamed) {
+      // 后端会补发最终 assistant_text 作为兼容兜底；新版前端若已经收过 delta，
+      // 这里只负责收口 live block，不再追加第二份完整答案。
+      if (this._liveAssistantEl) {
+        this.finishAssistantStream();
+        return;
+      }
+      const finalText = String(text || "");
+      if (this._streamedAssistantFinalPending || finalText === this._lastStreamedAssistantText) {
+        this._streamedAssistantFinalPending = false;
+        return;
+      }
     }
     this.addAssistantText(text);
   },
@@ -192,7 +201,8 @@ export const chat = {
     if (!this._liveAssistantEl) return;
     this._flushAssistantDelta(true);
     this._liveAssistantEl.classList.remove("is-streaming");
-    this._streamedAssistantFinalPending = Boolean(this._liveAssistantText);
+    this._lastStreamedAssistantText = this._liveAssistantText || "";
+    this._streamedAssistantFinalPending = Boolean(this._lastStreamedAssistantText);
     this._liveAssistantEl = null;
     this._liveAssistantText = "";
     this._assistantDeltaBuffer = "";
