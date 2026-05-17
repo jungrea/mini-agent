@@ -29,7 +29,7 @@ def _result(text: str) -> dict:
 
 def cmd_compact(sess: Session, _args: str) -> dict:
     sess.enqueue_compact()
-    return _result("已排入手动压缩任务，稍后查看对话。")
+    return _result("已排入手动压缩任务。压缩会调用一次 LLM 摘要，耗时取决于当前 live 上下文大小。")
 
 
 def cmd_clear(sess: Session, args: str) -> dict:

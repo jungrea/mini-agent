@@ -42,7 +42,7 @@ from ..core.config import WORKDIR
 from ..core.hooks import HookManager
 from ..core.loop import agent_loop
 from ..core.runtime import CURRENT_WORKDIR, TODO
-from ..managers.compression import auto_compact
+from ..managers.compression import auto_compact, estimate_tokens
 from ..permissions.manager import MODES, PermissionManager
 
 from .config import PERMISSION_ASK_TIMEOUT, WORKER_POLL_INTERVAL
@@ -245,6 +245,7 @@ class Session:
 
     def submit_user_message(self, text: str) -> None:
         """异步投递一条用户消息。worker 线程会接手驱动一轮 agent_loop。"""
+        self._ensure_worker_alive()
         self._input_queue.put(("user", text))
 
     def submit_slash_result(self, text: str) -> None:
@@ -364,6 +365,20 @@ class Session:
             type=EventType.STATUS, session_id=self.id, data={"state": s},
         ))
 
+    def _ensure_worker_alive(self) -> None:
+        """若 worker 曾因未捕获异常退出，则自动拉起一个新的 worker。"""
+        if self._stop_event.is_set() or self._worker.is_alive():
+            return
+        self._worker = threading.Thread(
+            target=self._worker_loop, daemon=True, name=f"SessionWorker-{self.id[:8]}"
+        )
+        self._worker.start()
+        self._set_state("idle")
+        self.events.publish(Event(
+            type=EventType.NOTICE, session_id=self.id,
+            data={"level": "warn", "text": "会话 worker 已自动恢复。"},
+        ))
+
     # ---------------- 序列化 ----------------
 
     def to_meta(self) -> dict:
@@ -473,12 +488,19 @@ class Session:
                 continue
             if kind == "stop":
                 break
-            if kind == "user":
-                self._run_one_round(payload)
-            elif kind == "slash_compact":
-                self._run_compact(payload)
-            elif kind == "slash_clear":
-                self._run_clear(payload)
+            try:
+                if kind == "user":
+                    self._run_one_round(payload)
+                elif kind == "slash_compact":
+                    self._run_compact(payload)
+                elif kind == "slash_clear":
+                    self._run_clear(payload)
+            except Exception as e:  # 防御：任何单次任务异常都不能杀死 worker 线程
+                self.events.publish(Event(
+                    type=EventType.ERROR, session_id=self.id,
+                    data={"message": f"worker task failed: {e}"},
+                ))
+                self._set_state("idle")
 
     def _run_one_round(self, user_text: str) -> None:
         """驱动一轮 agent_loop，把新增事件推给前端。"""
@@ -814,13 +836,58 @@ class Session:
 
     def _run_compact(self, _arg: str) -> None:
         self._set_state("running")
-        if self.history:
+        t0 = time.time()
+        try:
+            if not self.history:
+                self.events.publish(Event(
+                    type=EventType.NOTICE, session_id=self.id,
+                    data={
+                        "level": "info",
+                        "text": "当前 live API 上下文为空，无需压缩。历史消息只是前端展示，不会回传给 LLM。",
+                    },
+                ))
+                return
+
+            before_tokens = estimate_tokens(self.history)
+            self.events.publish(Event(
+                type=EventType.PHASE, session_id=self.id,
+                data={
+                    "state": "thinking",
+                    "label": f"正在压缩上下文…（约 {before_tokens:,} tokens，需要一次 LLM 摘要）",
+                },
+            ))
+            self.events.publish(Event(
+                type=EventType.NOTICE, session_id=self.id,
+                data={
+                    "level": "info",
+                    "text": f"开始手动压缩 live 上下文（约 {before_tokens:,} tokens），可能需要几十秒。",
+                },
+            ))
+
             self.history[:] = auto_compact(self.history)
-        self.events.publish(Event(
-            type=EventType.NOTICE, session_id=self.id,
-            data={"level": "info", "text": "已手动压缩历史"},
-        ))
-        self._set_state("idle")
+            after_tokens = estimate_tokens(self.history)
+            duration = time.time() - t0
+            self.events.publish(Event(
+                type=EventType.NOTICE, session_id=self.id,
+                data={
+                    "level": "ok",
+                    "text": f"已手动压缩 live 上下文：约 {before_tokens:,} → {after_tokens:,} tokens，用时 {duration:.1f}s。",
+                },
+            ))
+            self.events.publish(Event(
+                type=EventType.USAGE, session_id=self.id, data=self.usage.to_dict(),
+            ))
+        except Exception as e:
+            self.events.publish(Event(
+                type=EventType.ERROR, session_id=self.id,
+                data={"message": f"手动压缩失败: {e}"},
+            ))
+        finally:
+            self.events.publish(Event(
+                type=EventType.PHASE, session_id=self.id,
+                data={"state": "idle", "label": ""},
+            ))
+            self._set_state("idle")
 
     def _run_clear(self, hard: str) -> None:
         # /clear 语义：同时清 live（下一轮的上下文）和 display（展示给用户的面板）
@@ -850,7 +917,9 @@ class Session:
 
     # 提供给 slash_commands 层的入口
     def enqueue_compact(self) -> None:
+        self._ensure_worker_alive()
         self._input_queue.put(("slash_compact", ""))
 
     def enqueue_clear(self, hard: bool) -> None:
+        self._ensure_worker_alive()
         self._input_queue.put(("slash_clear", "hard" if hard else ""))

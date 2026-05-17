@@ -135,7 +135,16 @@ def auto_compact(messages: list, focus: str | None = None) -> list:
         messages=[{"role": "user", "content": prompt + "\n" + conv_text}],
         max_tokens=4000,
     )
-    summary = resp.content[0].text
+    # DeepSeek thinking 模式下 response.content 可能是 [ThinkingBlock, TextBlock]，
+    # 不能假设第 0 个 block 一定有 .text。
+    summary_parts = []
+    for block in getattr(resp, "content", []) or []:
+        text = getattr(block, "text", None)
+        if text:
+            summary_parts.append(text)
+    summary = "\n".join(summary_parts).strip()
+    if not summary:
+        summary = str(resp)
 
     # --- 3) 包装成 continuation 起点消息 ---
     # 关键点：明确告诉模型"不要再向用户提问"，避免压缩后的第一轮就卡在 Q&A
