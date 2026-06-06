@@ -331,23 +331,52 @@ class SystemPromptBuilder:
         return "# Available skills\n" + SKILLS.descriptions()
 
     def _build_memory(self) -> str:
-        """段 4：记忆。目录不存在或空时返回空串。"""
-        # memory_dir 也跟随 active workdir（会话级 workdir 下可能有自己的 .memory/）
-        active_memory_dir = self._active_workdir() / ".memory" \
-            if CURRENT_WORKDIR.get() is not None else self.memory_dir
-        items = _scan_memory(active_memory_dir)
-        if not items:
+        """
+        段 4：记忆索引（s09 模式）。
+
+        旧版（已弃用）把每条 .md 的整个 body 都拼进 SYSTEM——记忆多了
+        SYSTEM 会无限膨胀，prompt cache 也很难命中。
+
+        新版只塞 MEMORY.md 索引（一行一条 [name](file.md) — desc）。
+        每条记忆的 **body** 由 agent_loop 在 LLM 调用前通过
+        `managers.memory.load_memories()` 选 ≤5 条相关项注入到当前 user turn。
+
+        ⚠️ 重要：必须明确告诉 LLM "记忆是自动管理的，别自己用 write_file 写"。
+        否则 LLM 看到 "# Memory" 段会误以为它要主动维护，然后用 write_file
+        把记忆写到 `~/.claude/memory/...` 或绝对路径——这条路径在 workdir
+        外，`safe_path` 会拒，LLM 又会换路径重试，结果是用户连续看到一堆
+        write_file 权限弹窗。
+
+        MEMORY_ENABLED=0 时整段省略。
+        """
+        from ..managers.memory import MEMORY_ENABLED, read_memory_index
+        if not MEMORY_ENABLED:
             return ""
-        lines = ["# Memory"]
-        for m in items:
-            # 每条记忆以"[type] name: description"做 header，body 随后
-            header = f"## [{m['type']}] {m['name']}"
-            if m["description"]:
-                header += f" — {m['description']}"
-            lines.append(header)
-            if m["body"]:
-                lines.append(m["body"])
-        return "\n".join(lines)
+        index = read_memory_index()
+        guidance = (
+            "# Memory (read-only index)\n"
+            "Memory is managed AUTOMATICALLY by the harness — you never write "
+            "memory files yourself. Specifically:\n"
+            "  * After each round, the loop runs an extractor that decides "
+            "whether to save user preferences / project facts as memory files.\n"
+            "  * When relevant, the loop injects a <relevant_memories> block "
+            "into the user turn — read it for context.\n"
+            "  * DO NOT call write_file / edit_file on `.memory/` or "
+            "`~/.claude/memory/`. Those paths are owned by the harness; manual "
+            "writes will be rejected by the sandbox or cause duplicate ask "
+            "prompts.\n"
+            "  * If the user explicitly says 'remember X', simply acknowledge "
+            "in your reply (e.g. 'noted') — the extractor handles persistence.\n"
+        )
+        if not index:
+            # 即使没有任何记忆条目，也保留 guidance——LLM 看不到索引时
+            # 更容易"自作主张"去写文件，guidance 是必要的护栏。
+            return guidance + "\n(No memories yet.)"
+        return (
+            guidance
+            + "\nCurrent memory index (for awareness only — do not modify):\n"
+            + index
+        )
 
     def _build_claude_md(self) -> str:
         """段 5：CLAUDE.md 三层链，全不存在则返回空串。"""

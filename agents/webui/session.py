@@ -643,6 +643,29 @@ class Session:
                         data={"level": "warn",
                               "text": f"已在 {payload.get('stage', '?')} 处停止本轮"},
                     ))
+                # ---- s09: memory progress -------------------------------------
+                # 提取/整理在 worker 线程里同步调 LLM（≤秒级），死寂期间 UI 看
+                # 起来像卡住——这三个事件就是为了把"在跑什么"暴露给前端：
+                #   * memory_start   → 改 phase 状态为 "memory_updating"
+                #                      （前端的 spinner / 状态文本会切到"更新记忆中…"）
+                #   * memory_updated → 弹一条 NOTICE，告诉用户具体记下了什么 / 整理了什么
+                #   * memory_end     → 不主动 publish，因为下一个 phase（idle / running 等）
+                #                      会覆盖；显式发也行但容易和 round 收尾的别的事件抢序
+                elif event == "memory_start":
+                    self.events.publish(Event(
+                        type=EventType.PHASE, session_id=self.id,
+                        data={"state": "memory_updating",
+                              "label": "更新记忆中…"},
+                    ))
+                elif event == "memory_updated":
+                    self.events.publish(Event(
+                        type=EventType.NOTICE, session_id=self.id,
+                        data={"level": "info",
+                              "text": payload.get("text", "记忆已更新")},
+                    ))
+                elif event == "memory_end":
+                    # 故意不 publish——让 round 自身的 USAGE / state="idle" 收尾事件接管
+                    pass
             except Exception:
                 pass
 

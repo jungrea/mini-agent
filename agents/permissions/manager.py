@@ -60,6 +60,24 @@ DEFAULT_RULES: list[dict] = [
     {"tool": "bash", "content": "dd if=*",     "behavior": "deny"},
     {"tool": "bash", "content": ":(){ :|:& };:", "behavior": "deny"},
 
+    # === deny：禁止 LLM 直接写 memory 目录 ===
+    # s09 的 memory 系统由 RoundEnd 提取器自动维护，LLM 不该（也不需要）
+    # 自己用 write_file/edit_file 写 .memory/MEMORY.md 或 ~/.claude/memory/。
+    # 即使 SYSTEM 里已经讲清楚，仍要在权限层兜底——否则一旦 LLM 走偏，会触
+    # 发"写文件 → 路径越权 → 错误重试 → 又弹权限框"的循环卡住 UI。
+    {"tool": "write_file", "path": "*.memory/*",       "behavior": "deny"},
+    {"tool": "write_file", "path": ".memory/*",        "behavior": "deny"},
+    {"tool": "edit_file",  "path": "*.memory/*",       "behavior": "deny"},
+    {"tool": "edit_file",  "path": ".memory/*",        "behavior": "deny"},
+    # 绝对路径形态（LLM 偶尔会用 ~ 展开后的 home 路径）
+    {"tool": "write_file", "path": "*/.claude/memory/*", "behavior": "deny"},
+    {"tool": "edit_file",  "path": "*/.claude/memory/*", "behavior": "deny"},
+    # bash 同理：禁止用 echo/cat/heredoc 偷偷写记忆文件
+    {"tool": "bash", "content": "* > *.memory/*",      "behavior": "deny"},
+    {"tool": "bash", "content": "* >> *.memory/*",     "behavior": "deny"},
+    {"tool": "bash", "content": "* > */.claude/memory/*", "behavior": "deny"},
+    {"tool": "bash", "content": "* >> */.claude/memory/*", "behavior": "deny"},
+
     # === allow：读 / "无副作用"工具默认放行，避免骚扰 ===
     # 读文件：路径任意
     {"tool": "read_file",        "path": "*",   "behavior": "allow"},

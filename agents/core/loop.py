@@ -35,6 +35,12 @@ from contextlib import contextmanager, nullcontext
 from typing import Any, Callable, Iterator, Optional
 
 from ..managers.compression import auto_compact, estimate_tokens, microcompact
+from ..managers.memory import (
+    MEMORY_ENABLED,
+    consolidate_memories,
+    extract_memories,
+    load_memories,
+)
 from ..permissions.manager import PermissionManager
 from .config import (
     LLM_STREAM,
@@ -387,6 +393,15 @@ def agent_loop(messages: list,
     # 仅当 TODO 列表里还有 open items 时，达到阈值才追加 reminder
     rounds_without_todo = 0
 
+    # --- s09: 入口处选一次相关记忆（整个 agent_loop 复用） -----------------
+    # 为什么不每轮重选：
+    #   * select_relevant_memories 内部要发一次 LLM side-query（≤200 tokens），
+    #     每轮重选会让多工具调用的对话成本翻几倍
+    #   * 用户 turn 内的语义稳定——同一个 turn 里相关记忆基本不会变
+    #   * 跨 turn 由 cli/repl 重新进入 agent_loop，自然会重新选
+    # MEMORY_ENABLED=0 或无相关记忆时 memories_content == ""，注入逻辑会自动跳过。
+    memories_content = load_memories(messages) if MEMORY_ENABLED else ""
+
     while True:
         # 每轮开始前先检查外部是否请求早停
         if _is_cancelled(cancel_check):
@@ -394,6 +409,15 @@ def agent_loop(messages: list,
             return
 
         _safe_call(progress, "round_start", {})
+
+        # --- s09: 在压缩之前保存浅拷贝快照 -----------------------------------
+        # extract_memories 需要"未压缩"的对话——压缩后的摘要会把
+        # "用 tab 不要空格"这种细节降级成"用户有代码风格偏好"，提取毫无意义。
+        # 浅拷贝即可：消息体里的字符串/列表本身不会被压缩函数替换引用，
+        # 而是就地改文本内容；外层 list 拷贝下来就够避免被 auto_compact
+        # 的 messages[:] = ... 替换链断开。
+        # 注意只在 MEMORY_ENABLED 下做——关闭时是纯开销。
+        pre_compress: list = list(messages) if MEMORY_ENABLED else []
 
         # --- s06: 每轮必做的轻量压缩 -------------------------------------
         microcompact(messages)
@@ -465,11 +489,32 @@ def agent_loop(messages: list,
         # 不变，但 dynamic 段会反映当前日期、cwd、权限模式。重建成本 <1ms，
         # 不做缓存；这也是 s10 DYNAMIC_BOUNDARY 思想的落地——稳定与动态分离。
         system_text = BUILDER.build(mode=perms.mode if perms else None)
+
+        # --- s09: 把相关记忆注入最近一条 user text（不污染 messages 历史）---
+        # 选择 user text 注入而不是 SYSTEM 注入：每轮 user turn 的内容本来就在
+        # 重新发送，注入到这里不会影响 SYSTEM 的 prompt cache。注入对象用
+        # request_messages（messages 的浅拷贝），避免 memory body 永久写进
+        # 历史——下一轮的 select 会重新选。
+        # 找最近一条 content 为 str 的 user 消息（避开 tool_result 的 list content），
+        # 在其前面拼上 <relevant_memories> 块。找不到则跳过（极端情况，messages
+        # 末尾全是 tool_result，但此时 stop_reason 必然是 tool_use，select 没意义）。
+        request_messages = messages
+        if memories_content:
+            request_messages = list(messages)
+            for i in range(len(request_messages) - 1, -1, -1):
+                msg = request_messages[i]
+                if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+                    request_messages[i] = {
+                        **msg,
+                        "content": memories_content + "\n\n" + msg["content"],
+                    }
+                    break
+
         # normalize_messages 是出门安检：保证 messages 结构合法
         # （tool_use ↔ tool_result 配对、tool_result 在 user 内容前部、
         #  无空 content、剥内部字段）。源头 bug 仍应在 loop 自己里修；
         #  这里只是把"漏网"的小错降级为"打日志 + 静默修复"，避免直接 400。
-        response = _call_llm(system_text, messages, progress)
+        response = _call_llm(system_text, request_messages, progress)
         # 记录本轮 token 用量：repl HUD 会读这里的累计数据
         USAGE.record(getattr(response, "usage", None))
         messages.append({"role": "assistant", "content": response.content})
@@ -484,7 +529,11 @@ def agent_loop(messages: list,
             #   * tool_name = ""           —— 对齐通用约定，RoundEnd 无关工具
             #   * stop_reason              —— 通常是 "end_turn"
             #   * last_assistant_text      —— 本轮最终 assistant 文本预览（≤200 字）
-            # 刻意不尊重 blocked/updated_input —— round 已经结束，改也无意义。
+            # 刻意不尊重 updated_input —— round 已经结束，改也无意义。
+            # **尊重 blocked**：用户可在 .hooks.json 配 RoundEnd hook 返回 exit 1
+            # 来跳过 s09 的 extract / consolidate（例如不想让记忆系统在某些
+            # 会话里运行）。
+            memory_blocked = False
             if hooks is not None:
                 preview = ""
                 try:
@@ -495,14 +544,56 @@ def agent_loop(messages: list,
                             break
                 except Exception:
                     pass
-                hooks.run_hooks("RoundEnd", context={
+                hook_result = hooks.run_hooks("RoundEnd", context={
                     "tool_name": "",
                     "tool_input": {
                         "stop_reason": response.stop_reason,
                         "last_assistant_text": preview,
                     },
                 })
+                memory_blocked = bool(hook_result.get("blocked"))
             # ========= RoundEnd hook 结束 =========
+
+            # --- s09: RoundEnd 触发记忆抓取 + 整理 ---------------------------
+            # 用 pre_compress 而非 messages：保证看到的是用户原话，
+            # 不是被 microcompact 替换的 [Earlier tool result compacted.] 占位符。
+            # 提取/整理内部都做了 try/except 兜底，不会让主循环崩；
+            # MEMORY_ENABLED=0 / hook blocked 时全部 no-op。
+            #
+            # progress 事件设计：
+            #   * memory_start    —— 开始 extract（webui 显示"更新记忆中…"）
+            #   * memory_updated  —— 单条记忆/整理完成（webui 弹 NOTICE，含 name/scope）
+            #   * memory_end      —— 全部结束（webui 用来清状态）
+            # 仅在真正"有事发生"时才发 memory_updated——否则会把"提取了但 LLM 决定
+            # 没新东西"也当成噪音推给前端。死寂期靠 memory_start/end 的状态即可。
+            if MEMORY_ENABLED and not memory_blocked:
+                _safe_call(progress, "memory_start", {"phase": "extract"})
+                try:
+                    written = extract_memories(pre_compress)
+                    for w in written:
+                        _safe_call(progress, "memory_updated", {
+                            "phase": "extract",
+                            "name": w["name"],
+                            "scope": w["scope"],
+                            "type": w["type"],
+                            "text": (
+                                f"已记下: {w['name']} "
+                                f"(type={w['type']} → {w['scope']})"
+                            ),
+                        })
+                    cons = consolidate_memories()
+                    for scope, kept in cons.items():
+                        _safe_call(progress, "memory_updated", {
+                            "phase": "consolidate",
+                            "scope": scope,
+                            "count": kept,
+                            "text": f"已整理 {scope} 记忆 → {kept} 条",
+                        })
+                except Exception:
+                    # 双层防御：即使 manager 内部漏抛了异常也不能让主循环挂掉
+                    pass
+                finally:
+                    _safe_call(progress, "memory_end", {})
             return
 
         # --- 工具执行（两阶段调度：准入串行 + 执行分桶并行/串行）-----------
