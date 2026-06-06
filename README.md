@@ -17,6 +17,7 @@
 - **外部 Hook 系统**：`.hooks.json` 挂 shell 脚本到 `SessionStart` / `PreToolUse` / `PostToolUse` / `RoundEnd`，跨语言退出码契约
 - **子智能体 / 团队协作**：`run_subagent` + `MessageBus` + `TeammateManager`，支持独立 agent 间的消息通信与协作
 - **上下文压缩**：轻量 `microcompact`（每轮）+ 重度 `auto_compact`（超阈值自动触发），原对话备份到 `.transcripts/`
+- **记忆系统**：每轮自动从对话抽取偏好/事实，按 type 路由到用户级（`~/.claude/memory/`，跨项目）或项目级（`<WORKDIR>/.memory/`）；下一轮用 LLM side-query 选 ≤5 条相关项注入对话
 - **Skills 加载**：`skills/` 目录下的 `SKILL.md` 文件自动加载为可调用技能
 - **多会话隔离（WebUI）**：每个会话独立 history + 独立权限管理器，持久化到 `.claude/webui_sessions/`，刷新不丢
 - **并行工具执行**：`read_file` / `search_content` / `web_*` 等只读安全工具自动进入并行桶，LLM 同一轮并发请求多个时显著提速；其余工具仍串行以保证顺序与权限交互
@@ -233,14 +234,29 @@ min   hour   dom   month   dow           (dow: 0=周日)
 - **auto_compact**（token 超阈值自动触发）：把整段对话总结成一条 assistant 消息；完整原对话备份到 `.transcripts/transcript_<ts>.jsonl`
 - **手动触发**：`/compact` 或 LLM 调用 `compress` 工具
 
-### 7. Token 用量监控
+### 7. 记忆系统
+
+跨压缩、跨会话的知识层。每轮 `RoundEnd` 自动从对话抽取记忆，按 `type` 字段路由 scope：
+
+| type | 含义 | 落盘位置 |
+|------|------|---------|
+| `user` | 跨项目偏好（风格、习惯、自我介绍） | `~/.claude/memory/` |
+| `feedback` / `project` / `reference` | 项目特定事实 | `<WORKDIR>/.memory/` |
+
+每个 scope 各自维护 `MEMORY.md` 索引（一行一条 `[name](file.md) — desc`），注入 system prompt。下一轮 LLM 调用前用一次 side-query 从两层中选 ≤5 条相关项，把全文拼到当前 user turn 的前缀里。文件数 ≥ 10 时自动触发 LLM 合并去重（per-scope 锁，跨进程安全）。
+
+记忆由 harness 自动维护，LLM **不直接调** `write_file` 写记忆——权限层兜底拦死写 `.memory/` 与 `~/.claude/memory/`。设 `MEMORY_ENABLED=0` 整套静默；通过 `.hooks.json` 的 `RoundEnd` hook 返回 exit 1 也可单轮跳过。
+
+WebUI 在记忆抓取期间显示"更新记忆中…"，新增/整理时弹 NOTICE 提示具体名字与 scope。
+
+### 8. Token 用量监控
 
 每次 LLM 响应后把 `usage` 累计到 `UsageTracker`：
 
 - **CLI HUD**：`ctx ███░░░░░░░ 12% · in 4,512 out 1,203 · total 5,715/100,000 · Δin 312 Δout 87`
 - **WebUI HUD**：顶部条形进度条，50%/80% 三档绿/黄/红变色，对齐 `auto_compact` 触发阈值
 
-### 8. 子智能体与团队
+### 9. 子智能体与团队
 
 - **子智能体**：`run_subagent(prompt, agent_type)` 在独立上下文跑一段"用完即弃"的任务，结果摘要返回主 agent
 - **文件任务**（`.tasks/task_<id>.json`）：支持多 agent 抢占式协作
@@ -298,6 +314,7 @@ mini-agent/
     │   └── subagent.py          # run_subagent
     ├── managers/
     │   ├── todos.py · skills.py · compression.py
+    │   ├── memory.py            # 双层记忆（user / project，自动抽取 + 合并）
     │   ├── file_tasks.py        # 文件任务（多 agent 协作）
     │   ├── background.py        # 后台任务
     │   └── scheduler.py         # CronScheduler + CronLock
@@ -332,6 +349,8 @@ mini-agent/
 | `.task_outputs/tool-results/<id>.txt` | 超阈值工具输出落盘 |
 | `.tasks/task_<id>.json` | 文件任务 |
 | `.team/config.json` · `.team/inbox/<name>.jsonl` | 团队配置与收件箱 |
+| `<WORKDIR>/.memory/<name>.md` · `MEMORY.md` | 项目级记忆（自动抽取） |
+| `~/.claude/memory/<name>.md` · `MEMORY.md` | 用户级记忆（跨项目共享） |
 | `skills/<name>/SKILL.md` | 技能定义（frontmatter + body） |
 | `.hooks.json` · `.hooks.disabled` | Hook 配置与禁用标记 |
 | `~/.claude/CLAUDE.md` · `<WORKDIR>/.claude/CLAUDE.md` · `<WORKDIR>/CLAUDE.md` | 项目级 AI 指令，被 `SystemPromptBuilder` 按查找链合并进 system prompt（5 层：`~/.claude/` → `<WORKDIR>/.claude/` → `<WORKDIR>/` → `<cwd>/.claude/` → `<cwd>/`，同一路径自动去重） |
@@ -391,6 +410,9 @@ LLM_THINKING_BUDGET=4096     # 开启 thinking 时的预算
 
 **Q：如何接入其他模型？**
 `agents/core/config.py` 里的 `client = Anthropic(base_url=...)` 读 `ANTHROPIC_BASE_URL`，任何兼容 Anthropic API 的网关都能接入（包括通过代理层桥接的 OpenAI / Gemini / 国产模型）。模型名通过 `MODEL_ID` 环境变量注入，代码层只此一个入口——换模型只改 `.env` 即可。`.env.example` 里预置了 DeepSeek / MiniMax / GLM / Kimi 的 base_url 与 model id 模板。
+
+**Q：如何关闭 / 重置记忆系统？**
+`.env` 里设 `MEMORY_ENABLED=0` 即可整套静默。重置方法：删除 `~/.claude/memory/`（用户级）或 `<WORKDIR>/.memory/`（项目级）即可。每轮提取/整理会同步多 1-2 次轻量 LLM 调用——不希望付出此成本时直接关掉。
 
 ---
 
