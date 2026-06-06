@@ -118,7 +118,7 @@ input, textarea, select { font: inherit; color: inherit; }
 #topbar {
   height: 56px;
   display: grid;
-  grid-template-columns: 1fr 2fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 2fr) minmax(0, 1fr);
   align-items: center;
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
@@ -128,11 +128,11 @@ input, textarea, select { font: inherit; color: inherit; }
   position: relative;
   z-index: 10;
 }
-.topbar-left { display: flex; gap: 12px; align-items: center; }
-.logo { font-weight: 600; font-size: 16px; color: var(--text-0); }
-.current-title { color: var(--text-2); font-size: 13px; }
+.topbar-left { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.logo { font-weight: 600; font-size: 16px; color: var(--text-0); flex-shrink: 0; }
+.current-title { color: var(--text-2); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.topbar-mid { display: flex; justify-content: center; }
+.topbar-mid { display: flex; justify-content: center; min-width: 0; }
 .hud {
   display: flex; align-items: center; gap: 8px;
   font-variant-numeric: tabular-nums;
@@ -142,6 +142,8 @@ input, textarea, select { font: inherit; color: inherit; }
   border-radius: 999px;
   padding: 4px 14px;
   max-width: 560px;
+  min-width: 0;
+  overflow: hidden;
 }
 .hud-label { color: var(--text-2); }
 .hud-bar-wrap {
@@ -155,10 +157,10 @@ input, textarea, select { font: inherit; color: inherit; }
   transition: width .3s ease, background .3s ease;
 }
 .hud-pct { color: var(--text-0); font-weight: 600; min-width: 3em; }
-.hud-tokens { color: var(--text-2); }
-.hud-delta { color: var(--text-2); }
+.hud-tokens { color: var(--text-2); white-space: nowrap; }
+.hud-delta { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.topbar-right { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.topbar-right { display: flex; gap: 8px; justify-content: flex-end; align-items: center; min-width: 0; }
 .mode-select {
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -183,8 +185,9 @@ input, textarea, select { font: inherit; color: inherit; }
 /* ================== App Layout ================== */
 #app {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   height: calc(100vh - 56px);
+  min-width: 0;
 }
 
 /* ================== Sidebar ================== */
@@ -358,11 +361,13 @@ input, textarea, select { font: inherit; color: inherit; }
 #main {
   display: flex; flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .messages {
   flex: 1;
   overflow-y: auto;
+  min-width: 0;
   padding: 20px 24px 8px;
   scroll-behavior: smooth;
 }
@@ -708,6 +713,7 @@ input, textarea, select { font: inherit; color: inherit; }
   border-top: 1px solid var(--border);
   background: var(--glass-input);
   backdrop-filter: blur(8px);
+  min-width: 0;
 }
 
 /* ---------- 顶部阶段条（thinking / tool_running） ---------- */
@@ -820,7 +826,7 @@ input, textarea, select { font: inherit; color: inherit; }
   border: 1px solid var(--border);
   color: var(--text-0);
   border-radius: 10px;
-  padding: 10px 12px 12px;
+  padding: 10px 82px 12px 12px;
   resize: vertical;
   min-height: 64px;
   outline: none;
