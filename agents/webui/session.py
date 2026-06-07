@@ -38,7 +38,13 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Optional
 
-from ..core.config import WORKDIR
+from ..core.config import (
+    AVAILABLE_MODELS,
+    CURRENT_MODEL,
+    DEFAULT_MODEL,
+    WORKDIR,
+    normalize_model,
+)
 from ..core.hooks import HookManager
 from ..core.loop import agent_loop
 from ..core.runtime import CURRENT_WORKDIR, TODO
@@ -182,12 +188,14 @@ class Session:
                  history: Optional[list] = None,
                  hooks: Optional[HookManager] = None,
                  workdir: Optional[str] = None,
-                 display_history: Optional[list] = None) -> None:
+                 display_history: Optional[list] = None,
+                 model: Optional[str] = None) -> None:
         if mode not in MODES:
             mode = "default"
         self.id: str = id
         self.title: str = title
         self.mode: str = mode
+        self.model: str = normalize_model(model or DEFAULT_MODEL)
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
 
@@ -269,6 +277,18 @@ class Session:
             data={"mode": mode},
         ))
         return f"Mode switched to {mode}"
+
+    def set_model(self, model: str) -> str:
+        target = normalize_model(model)
+        if target not in AVAILABLE_MODELS:
+            return f"Unknown model: {model}"
+        self.model = target
+        self.updated_at = time.time()
+        self.events.publish(Event(
+            type=EventType.SESSION_UPDATED, session_id=self.id,
+            data={"model": target},
+        ))
+        return f"Model switched to {target}"
 
     # ---------------- 取消 / 停止 ----------------
 
@@ -386,6 +406,8 @@ class Session:
             "id": self.id,
             "title": self.title,
             "mode": self.mode,
+            "model": self.model,
+            "available_models": list(AVAILABLE_MODELS),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             # message_count 反映"展示面板里的条数"——以 display_history 为准。
@@ -684,6 +706,7 @@ class Session:
         #     原生提供线程隔离），互不干扰
         wd_token = CURRENT_WORKDIR.set(self.workdir_path) \
             if self.workdir_path is not None else None
+        model_token = CURRENT_MODEL.set(self.model)
 
         try:
             agent_loop(
@@ -699,6 +722,7 @@ class Session:
                 data={"message": error_msg},
             ))
         finally:
+            CURRENT_MODEL.reset(model_token)
             if wd_token is not None:
                 CURRENT_WORKDIR.reset(wd_token)
 
@@ -887,7 +911,11 @@ class Session:
                 },
             ))
 
-            self.history[:] = auto_compact(self.history)
+            model_token = CURRENT_MODEL.set(self.model)
+            try:
+                self.history[:] = auto_compact(self.history)
+            finally:
+                CURRENT_MODEL.reset(model_token)
             after_tokens = estimate_tokens(self.history)
             duration = time.time() - t0
             self.events.publish(Event(

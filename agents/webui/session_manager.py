@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from ..core.config import DEFAULT_MODEL, normalize_model
 from ..core.hooks import HookManager
 from ..permissions.manager import MODES
 
@@ -41,7 +42,8 @@ class SessionManager:
     # ---------------- CRUD ----------------
 
     def create(self, title: str = "", mode: str = "default",
-               workdir: Optional[str] = None) -> Session:
+               workdir: Optional[str] = None,
+               model: Optional[str] = None) -> Session:
         """
         新建会话。
 
@@ -55,7 +57,8 @@ class SessionManager:
         if not title:
             title = f"新对话 {time.strftime('%H:%M')}"
         sess = Session(id=sid, title=title, mode=mode, history=[],
-                       hooks=self._hooks, workdir=workdir)
+                       hooks=self._hooks, workdir=workdir,
+                       model=normalize_model(model or DEFAULT_MODEL))
         with self._lock:
             self._sessions[sid] = sess
         self._persist(sess)
@@ -94,6 +97,7 @@ class SessionManager:
                     "id": sid,
                     "title": raw.get("title", sid[:8]),
                     "mode": raw.get("mode", "default"),
+                    "model": normalize_model(raw.get("model", DEFAULT_MODEL)),
                     "created_at": raw.get("created_at", 0),
                     "updated_at": raw.get("updated_at", 0),
                     "message_count": len(raw.get("history", [])),
@@ -147,6 +151,7 @@ class SessionManager:
             "id": sess.id,
             "title": sess.title,
             "mode": sess.mode,
+            "model": sess.model,
             "created_at": sess.created_at,
             "updated_at": sess.updated_at,
             # workdir 写绝对路径字符串；None 表示用全局项目根
@@ -187,6 +192,7 @@ class SessionManager:
             display_history=raw.get("history", []),
             hooks=self._hooks,
             workdir=raw.get("workdir"),
+            model=raw.get("model", DEFAULT_MODEL),
         )
         sess.created_at = raw.get("created_at", sess.created_at)
         sess.updated_at = raw.get("updated_at", sess.updated_at)

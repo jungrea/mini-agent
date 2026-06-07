@@ -17,10 +17,10 @@ import time
 
 from ..core.config import (
     KEEP_RECENT,
-    MODEL,
     PRESERVE_RESULT_TOOLS,
     TRANSCRIPT_DIR,
     client,
+    get_model,
 )
 
 
@@ -131,7 +131,7 @@ def auto_compact(messages: list, focus: str | None = None) -> list:
         prompt += f"\nPay special attention to: {focus}\n"
 
     resp = client.messages.create(
-        model=MODEL,
+        model=get_model(),
         messages=[{"role": "user", "content": prompt + "\n" + conv_text}],
         max_tokens=4000,
     )

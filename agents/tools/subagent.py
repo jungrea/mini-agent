@@ -13,7 +13,7 @@ tools/subagent —— s04 子智能体。
         3) 并行性良好（未来可换成线程池）
 """
 
-from ..core.config import MODEL, client
+from ..core.config import client, get_model
 from ..core.normalize import normalize_messages
 from .bash import run_bash
 from .fs import run_edit, run_read, run_write
@@ -103,7 +103,7 @@ def run_subagent(prompt: str, agent_type: str = "Explore") -> str:
     # 硬上限 30 轮：避免子智能体陷入工具死循环耗掉配额
     for _ in range(30):
         resp = client.messages.create(
-            model=MODEL,
+            model=get_model(),
             messages=normalize_messages(sub_msgs),
             tools=sub_tools,
             max_tokens=8000,

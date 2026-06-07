@@ -50,6 +50,7 @@ import json
 import os
 from typing import Any, Callable
 
+from ..core.config import AVAILABLE_MODELS, CURRENT_MODEL, DEFAULT_MODEL, normalize_model
 from ..core.hooks import HookManager
 from ..core.loop import agent_loop
 from ..core.prompts import BUILDER
@@ -204,6 +205,20 @@ def _cmd_mode(args: str, _history: list[Any], perms: PermissionManager) -> None:
         print(f"Usage: /mode <{'|'.join(MODES)}>")
 
 
+def _cmd_model(args: str, _history: list[Any], perms: PermissionManager) -> None:
+    current = getattr(perms, "model", DEFAULT_MODEL)
+    target = args.strip()
+    if not target:
+        print(f"Current model: {current}")
+        print(f"Usage: /model <{'|'.join(AVAILABLE_MODELS)}>")
+        return
+    if target not in AVAILABLE_MODELS:
+        print(f"Usage: /model <{'|'.join(AVAILABLE_MODELS)}>")
+        return
+    perms.model = normalize_model(target)
+    print(f"[Switched model to {perms.model}]")
+
+
 def _cmd_rules(_args: str, _history: list[Any], perms: PermissionManager) -> None:
     for i, rule in enumerate(perms.rules):
         print(f"  {i}: {rule}")
@@ -349,6 +364,7 @@ _SLASH_COMMANDS: dict[str, Callable[[str, list[Any], PermissionManager], None]] 
     "/team":     _cmd_team,
     "/inbox":    _cmd_inbox,
     "/mode":     _cmd_mode,
+    "/model":    _cmd_model,
     "/rules":    _cmd_rules,
     "/prompt":   _cmd_prompt,
     "/sections": _cmd_sections,
@@ -366,6 +382,7 @@ _SLASH_USAGES: dict[str, str] = {
     "/team":     "/team                           列出 teammate",
     "/inbox":    "/inbox                          读取 lead 收件箱",
     "/mode":     "/mode <default|plan|auto>       切换权限模式",
+    "/model":    "/model <deepseek-v4-flash|deepseek-v4-pro>  切换模型",
     "/rules":    "/rules                          展示当前所有权限规则",
     "/prompt":   "/prompt                         打印当前 system prompt 全文",
     "/sections": "/sections                       打印 system prompt 段落目录",
@@ -495,9 +512,11 @@ def run_repl(mode: str | None = None) -> None:
     if mode is None:
         mode = _choose_mode_interactive()
     perms = build_perms(mode)
+    perms.model = DEFAULT_MODEL
     # 让 teammate 循环复用同一个权限管理器（teammate 下 ask 会自动退化为 deny）
     TEAM.perms = perms
     print(f"[Permission mode: {mode}]")
+    print(f"[Model: {perms.model}]")
 
     # --- Cron 调度器初始化（s14 融合）---
     # start() 做三件事：拿跨进程锁、载入 durable 任务、启动后台线程。
@@ -610,7 +629,11 @@ def run_repl(mode: str | None = None) -> None:
         # 普通对话：作为 user 消息驱动一轮 agent_loop
         history.append({"role": "user", "content": query})
         stream_state: dict[str, Any] = {"assistant": False, "thinking": False}
-        agent_loop(history, perms, hooks=hooks, progress=_make_repl_progress(stream_state))
+        model_token = CURRENT_MODEL.set(getattr(perms, "model", DEFAULT_MODEL))
+        try:
+            agent_loop(history, perms, hooks=hooks, progress=_make_repl_progress(stream_state))
+        finally:
+            CURRENT_MODEL.reset(model_token)
         close_thinking = stream_state.get("close_thinking")
         if callable(close_thinking):
             close_thinking()

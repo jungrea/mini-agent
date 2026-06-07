@@ -25,12 +25,12 @@ import time
 
 from ..core.config import (
     IDLE_TIMEOUT,
-    MODEL,
     POLL_INTERVAL,
     TASKS_DIR,
     TEAM_DIR,
     WORKDIR,
     client,
+    get_model,
 )
 from ..core.prompts import build_identity
 from ..core.normalize import normalize_messages
@@ -197,7 +197,7 @@ class TeammateManager:
                 # (b) 调用 LLM
                 try:
                     response = client.messages.create(
-                        model=MODEL,
+                        model=get_model(getattr(self.perms, "model", None)),
                         system=sys_prompt,
                         messages=normalize_messages(messages),
                         tools=tools,

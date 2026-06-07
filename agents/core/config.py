@@ -66,8 +66,25 @@ CURRENT_WORKDIR: "ContextVar[Optional[Path]]" = ContextVar("CURRENT_WORKDIR", de
 # 官方 SDK：若 base_url=None，则走官方 Anthropic 端点
 client: Anthropic = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 
-# MODEL_ID 必须通过环境变量提供（缺失时直接抛 KeyError，fail-fast）
-MODEL: str = os.environ["MODEL_ID"]
+# 当前教学版先支持 DeepSeek V4 两个模型；后续扩展只需扩这里的白名单。
+AVAILABLE_MODELS: tuple[str, ...] = ("deepseek-v4-flash", "deepseek-v4-pro")
+DEFAULT_MODEL: str = "deepseek-v4-flash"
+
+
+def normalize_model(model: Optional[str]) -> str:
+    candidate = (model or DEFAULT_MODEL).strip()
+    return candidate if candidate in AVAILABLE_MODELS else DEFAULT_MODEL
+
+
+# MODEL_ID 作为启动默认值；缺失时默认 deepseek-v4-flash。
+MODEL: str = normalize_model(os.getenv("MODEL_ID", DEFAULT_MODEL))
+
+# 会话/REPL 可通过 ContextVar 临时覆盖本次 LLM 调用使用的模型。
+CURRENT_MODEL: "ContextVar[Optional[str]]" = ContextVar("CURRENT_MODEL", default=None)
+
+
+def get_model(model: Optional[str] = None) -> str:
+    return normalize_model(model or CURRENT_MODEL.get() or MODEL)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

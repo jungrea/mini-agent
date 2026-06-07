@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..core.config import AVAILABLE_MODELS
 from ..core.prompts import BUILDER
 from ..core.runtime import BUS, CRON, TASK_MGR, TEAM
 from ..core.usage import USAGE, format_hud
@@ -43,6 +44,18 @@ def cmd_mode(sess: Session, args: str) -> dict:
     if target not in MODES:
         return _result(f"Usage: /mode <{'|'.join(MODES)}>")
     return _result(sess.set_mode(target))
+
+
+def cmd_model(sess: Session, args: str) -> dict:
+    target = args.strip()
+    if not target:
+        return _result(
+            "Current model: " + sess.model + "\n" +
+            "Usage: /model <" + "|".join(AVAILABLE_MODELS) + ">"
+        )
+    if target not in AVAILABLE_MODELS:
+        return _result(f"Usage: /model <{'|'.join(AVAILABLE_MODELS)}>")
+    return _result(sess.set_model(target))
 
 
 def cmd_rules(sess: Session, _args: str) -> dict:
@@ -104,6 +117,7 @@ HANDLERS: dict[str, Any] = {
     "/compact":  cmd_compact,
     "/clear":    cmd_clear,
     "/mode":     cmd_mode,
+    "/model":    cmd_model,
     "/rules":    cmd_rules,
     "/prompt":   cmd_prompt,
     "/sections": cmd_sections,

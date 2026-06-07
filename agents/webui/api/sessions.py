@@ -20,6 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ...core.config import AVAILABLE_MODELS
 from ..config import SLASH_COMMANDS
 from ..session_manager import get_manager
 from ..slash_commands import run_slash
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/api")
 class CreateSessionReq(BaseModel):
     title: str = ""
     mode: str = "default"
+    model: str = "deepseek-v4-flash"
     # 会话级工作区（绝对路径 / 可带 ~）；留空 = 用启动时的项目根。
     # 非法路径（不存在 / 非目录 / 系统敏感目录）由 Session 校验后抛 ValueError，
     # 这里捕获后转 400 返回前端。
@@ -40,6 +42,7 @@ class CreateSessionReq(BaseModel):
 class PatchSessionReq(BaseModel):
     title: Optional[str] = None
     mode: Optional[str] = None
+    model: Optional[str] = None
 
 
 class MessageReq(BaseModel):
@@ -58,8 +61,10 @@ def list_sessions():
 @router.post("/sessions")
 def create_session(req: CreateSessionReq):
     try:
+        if req.model not in AVAILABLE_MODELS:
+            raise ValueError(f"unknown model: {req.model}")
         sess = get_manager().create(
-            title=req.title, mode=req.mode, workdir=req.workdir,
+            title=req.title, mode=req.mode, workdir=req.workdir, model=req.model,
         )
     except ValueError as e:
         # workdir 校验失败：不存在 / 非目录 / 系统敏感目录
@@ -85,6 +90,10 @@ def patch_session(sid: str, req: PatchSessionReq):
         mgr.rename(sid, req.title)
     if req.mode is not None:
         sess.set_mode(req.mode)
+    if req.model is not None:
+        if req.model not in AVAILABLE_MODELS:
+            raise HTTPException(400, f"unknown model: {req.model}")
+        sess.set_model(req.model)
     mgr.persist(sid)
     return sess.to_meta()
 

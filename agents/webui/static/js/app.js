@@ -72,6 +72,7 @@ async function init() {
   // -- 新建 / 模式 / 斜杠 / 权限 --
   document.getElementById("newSessionBtn").addEventListener("click", onNewSession);
   document.getElementById("modeSelect").addEventListener("change", onModeChange);
+  document.getElementById("modelSelect").addEventListener("change", onModelChange);
   await initSlash({
     onExecute: async (line) => {
       if (!currentSessionId) { alert("请先新建或选择会话"); return; }
@@ -124,6 +125,10 @@ function setModeUI(mode) {
   document.getElementById("currentMode").textContent = mode;
 }
 
+function setModelUI(model) {
+  document.getElementById("modelSelect").value = model || "deepseek-v4-flash";
+}
+
 async function switchSession(sid) {
   currentSessionId = sid;
   sessionsUI.setCurrent(sid);
@@ -137,6 +142,7 @@ async function switchSession(sid) {
     const detail = await api.getSession(sid);
     document.getElementById("currentTitle").textContent = detail.title;
     setModeUI(detail.mode || "default");
+    setModelUI(detail.model || "deepseek-v4-flash");
     setWorkdirTag(detail.workdir, detail.workdir_default);
     chat.renderHistory(detail.history);
     if (detail.usage) hud.update(detail.usage);
@@ -216,12 +222,14 @@ function openNewSessionModal() {
   const modal = document.getElementById("newSessionModal");
   const wd    = document.getElementById("newSessionWorkdir");
   const mode  = document.getElementById("newSessionMode");
+  const model = document.getElementById("newSessionModel");
   const err   = document.getElementById("newSessionError");
   const recentEl = document.getElementById("newSessionRecent");
 
   if (!modal) return;
-  // 默认填入顶部 modeSelect 当前值（用户手感连贯）
+  // 默认填入顶部选择器当前值（用户手感连贯）
   mode.value = document.getElementById("modeSelect").value || "default";
+  model.value = document.getElementById("modelSelect").value || "deepseek-v4-flash";
   wd.value = "";
   err.classList.add("is-hidden"); err.style.display = "none"; err.textContent = "";
 
@@ -282,11 +290,12 @@ function closeNewSessionModal() {
 async function submitNewSession(cleanup) {
   const wd   = document.getElementById("newSessionWorkdir").value.trim();
   const mode = document.getElementById("newSessionMode").value || "default";
+  const model = document.getElementById("newSessionModel").value || "deepseek-v4-flash";
   const errEl = document.getElementById("newSessionError");
   errEl.classList.add("is-hidden"); errEl.style.display = "none"; errEl.textContent = "";
 
   try {
-    const meta = await api.createSession("", mode, wd || null);
+    const meta = await api.createSession("", mode, wd || null, model);
     if (wd) pushRecentWorkdir(wd);
     closeNewSessionModal();
     if (cleanup) cleanup();
@@ -315,8 +324,9 @@ async function quickCreateDefaultSession() {
   // 用于"用户已经输入消息但还没会话"等无人值守路径——静默用默认配置创建，
   // 避免弹窗打断用户的输入流。
   const mode = document.getElementById("modeSelect").value || "default";
+  const model = document.getElementById("modelSelect").value || "deepseek-v4-flash";
   try {
-    const meta = await api.createSession("", mode, null);
+    const meta = await api.createSession("", mode, null, model);
     await sessionsUI.refresh();
     await switchSession(meta.id);
   } catch (e) {
@@ -461,6 +471,18 @@ async function onModeChange() {
     await api.patchSession(currentSessionId, { mode });
     setModeUI(mode);
     notify.show({ level: "info", title: "模式已切换", body: mode });
+  } catch (e) {
+    notify.show({ level: "error", title: "切换失败", body: e.message });
+  }
+}
+
+async function onModelChange() {
+  const model = document.getElementById("modelSelect").value;
+  if (!currentSessionId) return;
+  try {
+    await api.patchSession(currentSessionId, { model });
+    setModelUI(model);
+    notify.show({ level: "info", title: "模型已切换", body: model });
   } catch (e) {
     notify.show({ level: "error", title: "切换失败", body: e.message });
   }
@@ -635,6 +657,8 @@ function handleSessionEvent(ev) {
       notify.show({ level: "error", title: "auto_run 失败", body: data.error || "" });
       break;
     case "session_updated":
+      if (data && data.model) setModelUI(data.model);
+      if (data && data.mode) setModeUI(data.mode);
       sessionsUI.refresh();
       break;
     default:

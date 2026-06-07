@@ -49,6 +49,7 @@ SLASH_COMMANDS: list[tuple[str, str]] = [
     ("/compact",  "手动触发 auto_compact"),
     ("/clear",    "清对话历史；/clear hard 额外清 usage / todos"),
     ("/mode",     "切换权限模式：/mode <default|plan|auto>"),
+    ("/model",    "切换模型：/model <deepseek-v4-flash|deepseek-v4-pro>"),
     ("/usage",    "查看 token 用量；/usage reset 清零"),
     ("/cron",     "定时任务：/cron [list|clear [hard]|test [prompt]]"),
     ("/tasks",    "列出文件任务"),

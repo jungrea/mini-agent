@@ -43,7 +43,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from ..core.config import CURRENT_WORKDIR, MODEL, WORKDIR, client
+from ..core.config import CURRENT_WORKDIR, WORKDIR, client, get_model
 
 
 # ============================================================================
@@ -353,7 +353,7 @@ def select_relevant_memories(messages: list, max_items: int = MAX_RELEVANT) -> l
     # 路径一：LLM side-query
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=get_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
         )
@@ -473,7 +473,7 @@ def extract_memories(messages: list) -> list[dict]:
 
     try:
         response = client.messages.create(
-            model=MODEL,
+            model=get_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=800,
         )
@@ -579,7 +579,7 @@ def _consolidate_scope(scope: str) -> int:
             f"{catalog[:16000]}"
         )
         response = client.messages.create(
-            model=MODEL,
+            model=get_model(),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=3000,
         )

@@ -46,9 +46,9 @@ from .config import (
     LLM_STREAM,
     LLM_THINKING,
     LLM_THINKING_BUDGET,
-    MODEL,
     TOKEN_THRESHOLD,
     client,
+    get_model,
 )
 from .dispatch import PARALLEL_SAFE, TOOL_HANDLERS, TOOLS
 from .hooks import HookManager
@@ -210,7 +210,7 @@ def _llm_request_args(system_text: str,
                       include_thinking: bool = True) -> dict[str, Any]:
     """组装 Anthropic messages.create / messages.stream 共用参数。"""
     args: dict[str, Any] = {
-        "model": MODEL,
+        "model": get_model(),
         "system": system_text,
         "messages": normalize_messages(messages),
         "tools": TOOLS,

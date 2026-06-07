@@ -168,6 +168,8 @@ input, textarea, select { font: inherit; color: inherit; }
   padding: 6px 10px;
   border-radius: 8px;
   color: var(--text-0);
+  max-width: 180px;
+  min-width: 0;
 }
 .bell {
   position: relative;

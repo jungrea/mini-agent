@@ -86,6 +86,7 @@ WebUI 一页两栏：左栏会话列表（按工作区自动分组、可折叠�
 | `/compact` | 手动触发 auto_compact（重度压缩对话历史） |
 | `/clear [hard]` | 清对话历史；`hard` 连 token 用量与 todos 一并清 |
 | `/mode <default\|plan\|auto>` | 切换权限模式 |
+| `/model <deepseek-v4-flash\|deepseek-v4-pro>` | 切换当前 REPL / WebUI 会话使用的模型；无参数时查看当前模型 |
 | `/usage [reset]` | 打印 token 用量；`reset` 清零 |
 | `/cron [list\|clear [hard]\|test [prompt]]` | 定时任务查看 / 清空 / 手动触发 |
 | `/tasks` | 列出 `.tasks/` 下所有文件任务 |
@@ -408,8 +409,11 @@ LLM_THINKING_BUDGET=4096     # 开启 thinking 时的预算
 
 如果模型/网关支持 extended thinking，可设 `LLM_THINKING=enabled` 显示思考过程；若网关不支持或返回异常，核心循环会自动降级为普通流式输出。修改 `.env` 后需要重启 REPL/WebUI。
 
+**Q：如何切换模型？**
+当前内置支持 `deepseek-v4-flash` 与 `deepseek-v4-pro`。`.env` 里的 `MODEL_ID` 只作为启动默认值；运行时可在 CLI 用 `/model deepseek-v4-pro`，或在 WebUI 右上角模型下拉框切换。WebUI 的模型选择按会话持久化，老会话没有模型字段时默认 `deepseek-v4-flash`。
+
 **Q：如何接入其他模型？**
-`agents/core/config.py` 里的 `client = Anthropic(base_url=...)` 读 `ANTHROPIC_BASE_URL`，任何兼容 Anthropic API 的网关都能接入（包括通过代理层桥接的 OpenAI / Gemini / 国产模型）。模型名通过 `MODEL_ID` 环境变量注入，代码层只此一个入口——换模型只改 `.env` 即可。`.env.example` 里预置了 DeepSeek / MiniMax / GLM / Kimi 的 base_url 与 model id 模板。
+`agents/core/config.py` 里的 `client = Anthropic(base_url=...)` 读 `ANTHROPIC_BASE_URL`，任何兼容 Anthropic API 的网关都能接入（包括通过代理层桥接的 OpenAI / Gemini / 国产模型）。当前 UI 白名单在 `AVAILABLE_MODELS` 中；要扩展模型，先在这里加入模型 ID，再按需更新 `.env.example` / WebUI 下拉选项。
 
 **Q：如何关闭 / 重置记忆系统？**
 `.env` 里设 `MEMORY_ENABLED=0` 即可整套静默。重置方法：删除 `~/.claude/memory/`（用户级）或 `<WORKDIR>/.memory/`（项目级）即可。每轮提取/整理会同步多 1-2 次轻量 LLM 调用——不希望付出此成本时直接关掉。
