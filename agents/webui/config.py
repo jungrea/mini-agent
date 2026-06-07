@@ -39,6 +39,9 @@ SESSIONS_DIR: Path = WORKDIR / ".claude" / "webui_sessions"
 #: 这里仅作为磁盘上安全上限，避免某个会话的 JSON 爆掉）
 SESSION_HISTORY_SOFT_LIMIT: int = 4000
 
+#: WebUI 打开历史会话时默认只返回最近 N 条消息，避免大历史拖垮浏览器主线程。
+WEBUI_HISTORY_LOAD_LIMIT: int = 30
+
 
 # ------------------------------ 前端 -------------------------------
 

@@ -419,13 +419,24 @@ class Session:
             "workdir_default": str(WORKDIR),
         }
 
-    def to_dict_full(self) -> dict:
+    def to_dict_full(self, history_limit: Optional[int] = None) -> dict:
         with self._asks_lock:
             pending_asks = [dict(p.get("payload", {})) for p in self._pending_asks.values()]
+        history_total = len(self.display_history)
+        if history_limit is not None and history_limit > 0:
+            visible_history = self.display_history[-history_limit:]
+        else:
+            visible_history = self.display_history
+        history_loaded = len(visible_history)
         return {
             **self.to_meta(),
             # 前端渲染用 display_history（跨重启的完整可见历史）。
-            "history": [serialize_message(m) for m in self.display_history],
+            # 默认只返回最近 N 条，完整历史仍保留在内存和磁盘中。
+            "history": [serialize_message(m) for m in visible_history],
+            "history_total": history_total,
+            "history_loaded": history_loaded,
+            "history_offset": max(history_total - history_loaded, 0),
+            "history_truncated": history_loaded < history_total,
             "usage": self.usage.to_dict(),
             "pending_permission_asks": pending_asks,
         }
@@ -674,10 +685,11 @@ class Session:
                 #   * memory_end     → 不主动 publish，因为下一个 phase（idle / running 等）
                 #                      会覆盖；显式发也行但容易和 round 收尾的别的事件抢序
                 elif event == "memory_start":
+                    phase_name = payload.get("phase")
+                    label = "检索记忆中…" if phase_name == "select" else "更新记忆中…"
                     self.events.publish(Event(
                         type=EventType.PHASE, session_id=self.id,
-                        data={"state": "memory_updating",
-                              "label": "更新记忆中…"},
+                        data={"state": "memory_updating", "label": label},
                     ))
                 elif event == "memory_updated":
                     self.events.publish(Event(

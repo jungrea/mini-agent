@@ -18,12 +18,15 @@ async function req(method, url, body) {
   return data;
 }
 
+const DEFAULT_HISTORY_LIMIT = 30;
+
 export const api = {
   listSessions:   ()                       => req("GET",    "/api/sessions"),
   // workdir：会话级工作区（绝对路径或 ~ 开头）；空/null = 用启动时的项目根
   createSession:  (title, mode, workdir, model = "deepseek-v4-flash") => req("POST", "/api/sessions",
                                                   { title, mode, workdir: workdir || null, model }),
-  getSession:     (sid)                    => req("GET",    `/api/sessions/${sid}`),
+  getSession:     (sid, historyLimit = DEFAULT_HISTORY_LIMIT) => req("GET",
+      `/api/sessions/${sid}?history_limit=${encodeURIComponent(historyLimit)}`),
   patchSession:   (sid, body)              => req("PATCH",  `/api/sessions/${sid}`, body),
   deleteSession:  (sid)                    => req("DELETE", `/api/sessions/${sid}`),
 

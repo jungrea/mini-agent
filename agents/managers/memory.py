@@ -332,7 +332,17 @@ def select_relevant_memories(messages: list, max_items: int = MAX_RELEVANT) -> l
     if not files:
         return []
     recent = _recent_user_text(messages)
-    if not recent.strip():
+    recent_clean = recent.strip()
+    if not recent_clean:
+        return []
+
+    # 极短寒暄/探活不值得再发一次 LLM side-query 选记忆；否则用户发"你好呀"
+    # 时会先卡在记忆检索，看起来像 WebUI 没反应。
+    if len(recent_clean) <= 12 and re.fullmatch(
+        r"(你好呀?|您好|哈喽|嗨|hi|hello|hey|test|测试|在吗)[！!。,.，\s]*",
+        recent_clean,
+        re.IGNORECASE,
+    ):
         return []
 
     # 跨 scope 联合编号 0..N-1，每行标注 scope 让 LLM 知道"哪些是全局偏好哪些是本项目"

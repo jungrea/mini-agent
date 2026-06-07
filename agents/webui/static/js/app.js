@@ -4,10 +4,10 @@
 // 的强缓存。修改任何 js 模块后，递增对应 import 的 ?v= 版本号；若改了
 // app.js 自身，同步更新 index.html 里的主入口 app.js?v=，浏览器会重新下载模块。
 
-import { api }            from "./api.js?v=17";
+import { api }            from "./api.js?v=18";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=23";
+import { chat }           from "./chat.js?v=25";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";
@@ -144,7 +144,12 @@ async function switchSession(sid) {
     setModeUI(detail.mode || "default");
     setModelUI(detail.model || "deepseek-v4-flash");
     setWorkdirTag(detail.workdir, detail.workdir_default);
-    chat.renderHistory(detail.history);
+    chat.renderHistory(detail.history, {
+      historyTotal: detail.history_total,
+      historyLoaded: detail.history_loaded,
+      historyOffset: detail.history_offset,
+      historyTruncated: detail.history_truncated,
+    });
     if (detail.usage) hud.update(detail.usage);
     if (Array.isArray(detail.pending_permission_asks) && detail.pending_permission_asks.length > 0) {
       permission.show(detail.pending_permission_asks[detail.pending_permission_asks.length - 1]);
@@ -509,13 +514,19 @@ async function submitFromInput() {
     return;
   }
 
+  // 先本地回显，再发 POST。否则网络/后端稍慢时，用户会看到“点了发送完全没反应”。
+  chat.addUser(text);
+  chat.showTyping("正在准备上下文…");
+  phase.set("thinking", "正在准备上下文…");
+  setInputState("running");
+
   try {
     await api.postMessage(currentSessionId, text);
-    chat.addUser(text);              // 本地立即回显用户消息
-    chat.showTyping("正在准备上下文…"); // 在第一个 llm_start 之前先显示等待气泡
-    phase.set("thinking", "正在准备上下文…");
-    setInputState("running");
   } catch (e) {
+    chat.removeTyping();
+    phase.reset();
+    setInputState("idle");
+    box.value = text;
     notify.show({ level: "error", title: "发送失败", body: e.message });
   }
 }

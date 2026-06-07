@@ -400,7 +400,15 @@ def agent_loop(messages: list,
     #   * 用户 turn 内的语义稳定——同一个 turn 里相关记忆基本不会变
     #   * 跨 turn 由 cli/repl 重新进入 agent_loop，自然会重新选
     # MEMORY_ENABLED=0 或无相关记忆时 memories_content == ""，注入逻辑会自动跳过。
-    memories_content = load_memories(messages) if MEMORY_ENABLED else ""
+    memories_content = ""
+    if MEMORY_ENABLED:
+        _safe_call(progress, "memory_start", {"phase": "select"})
+        try:
+            memories_content = load_memories(messages)
+        except Exception:
+            memories_content = ""
+        finally:
+            _safe_call(progress, "memory_end", {"phase": "select"})
 
     while True:
         # 每轮开始前先检查外部是否请求早停

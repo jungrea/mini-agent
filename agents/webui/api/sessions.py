@@ -17,11 +17,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ...core.config import AVAILABLE_MODELS
-from ..config import SLASH_COMMANDS
+from ..config import SLASH_COMMANDS, WEBUI_HISTORY_LOAD_LIMIT
 from ..session_manager import get_manager
 from ..slash_commands import run_slash
 
@@ -73,11 +73,14 @@ def create_session(req: CreateSessionReq):
 
 
 @router.get("/sessions/{sid}")
-def get_session(sid: str):
+def get_session(
+    sid: str,
+    history_limit: int = Query(WEBUI_HISTORY_LOAD_LIMIT, ge=0, le=4000),
+):
     sess = get_manager().get(sid)
     if sess is None:
         raise HTTPException(404, "session not found")
-    return sess.to_dict_full()
+    return sess.to_dict_full(history_limit=history_limit)
 
 
 @router.patch("/sessions/{sid}")

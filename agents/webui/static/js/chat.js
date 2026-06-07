@@ -45,7 +45,14 @@ function truncate(s, max = 140) {
   return s.slice(0, max - 1) + "…";
 }
 
+let suppressScroll = false;
+let pendingScroll = false;
+
 function scrollToBottom() {
+  if (suppressScroll) {
+    pendingScroll = true;
+    return;
+  }
   const box = document.getElementById("messages");
   box.scrollTop = box.scrollHeight;
 }
@@ -67,32 +74,45 @@ export const chat = {
     box.innerHTML = `<div class="empty-hint" id="emptyHint">${escapeHTML(text)}</div>`;
   },
 
-  renderHistory(history) {
+  renderHistory(history, meta = {}) {
     this.clear();
     if (!history || history.length === 0) { this.showEmpty("这是一个全新的会话，尽管开始吧。"); return; }
     this.hideEmpty();
-    for (const msg of history) {
-      if (msg.role === "user") {
-        if (typeof msg.content === "string") this.addUser(msg.content);
-        else if (Array.isArray(msg.content)) {
-          for (const b of msg.content) {
-            if (b.type === "tool_result") this.addToolResult(b.tool_use_id, b.content);
-            else if (b.type === "text") this.addNotice(b.text);
+    suppressScroll = true;
+    pendingScroll = false;
+    try {
+      if (meta.historyTruncated) {
+        const hidden = meta.historyOffset || 0;
+        const loaded = meta.historyLoaded || history.length;
+        const total = meta.historyTotal || (hidden + loaded);
+        this.addNotice(`已折叠较早的 ${hidden} 条历史，仅加载最近 ${loaded}/${total} 条。完整历史仍保留在本地。`);
+      }
+      for (const msg of history) {
+        if (msg.role === "user") {
+          if (typeof msg.content === "string") this.addUser(msg.content);
+          else if (Array.isArray(msg.content)) {
+            for (const b of msg.content) {
+              if (b.type === "tool_result") this.addToolResult(b.tool_use_id, b.content);
+              else if (b.type === "text") this.addNotice(b.text);
+            }
           }
-        }
-      } else if (msg.role === "assistant") {
-        if (typeof msg.content === "string") this.addAssistantText(msg.content);
-        else if (Array.isArray(msg.content)) {
-          for (const b of msg.content) {
-            if (b.type === "thinking") this.addThinkingBlock(b.thinking, { collapsed: true });
-            else if (b.type === "redacted_thinking") this.addThinkingBlock("[redacted thinking]", { collapsed: true, redacted: true });
-            else if (b.type === "text") this.addAssistantText(b.text);
-            else if (b.type === "tool_use") this.addToolUse(b.id, b.name, b.input, "done");
+        } else if (msg.role === "assistant") {
+          if (typeof msg.content === "string") this.addAssistantText(msg.content);
+          else if (Array.isArray(msg.content)) {
+            for (const b of msg.content) {
+              if (b.type === "thinking") this.addThinkingBlock(b.thinking, { collapsed: true });
+              else if (b.type === "redacted_thinking") this.addThinkingBlock("[redacted thinking]", { collapsed: true, redacted: true });
+              else if (b.type === "text") this.addAssistantText(b.text);
+              else if (b.type === "tool_use") this.addToolUse(b.id, b.name, b.input, "done");
+            }
           }
         }
       }
+    } finally {
+      suppressScroll = false;
+      if (pendingScroll) scrollToBottom();
+      pendingScroll = false;
     }
-    scrollToBottom();
   },
 
   addUser(text) {
