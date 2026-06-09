@@ -29,13 +29,13 @@ from ..team.messaging import MessageBus
 from ..team.teammate import TeammateManager
 # 重新导出 CURRENT_WORKDIR，让既有的 `from ..core.runtime import CURRENT_WORKDIR`
 # 调用方（webui/session.py）继续工作。真正定义在 core.config，避免循环 import。
-from .config import CURRENT_WORKDIR, SKILLS_DIR
+from .config import CURRENT_WORKDIR, SKILLS_DIRS
 
 
 # === 全局单例（整个进程内共享） ===========================================
 
 TODO: TodoManager = TodoManager()
-SKILLS: SkillLoader = SkillLoader(SKILLS_DIR)
+SKILLS: SkillLoader = SkillLoader(SKILLS_DIRS)
 TASK_MGR: TaskManager = TaskManager()
 BG: BackgroundManager = BackgroundManager()
 BUS: MessageBus = MessageBus()

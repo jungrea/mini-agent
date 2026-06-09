@@ -116,7 +116,13 @@ INBOX_DIR: Path = TEAM_DIR / "inbox"
 TASKS_DIR: Path = WORKDIR / ".tasks"
 
 # 可加载技能目录（每个技能一个子目录，内含 SKILL.md）
-SKILLS_DIR: Path = WORKDIR / "skills"
+# 查找顺序：全局 → 项目 .claude/ → 兼容旧路径
+# 同名技能：先找到的优先（全局可被项目级覆盖）
+SKILLS_DIRS: list[Path] = [
+    Path.home() / ".claude" / "skills",     # 全局 ~/.claude/skills/（所有项目共享）
+    WORKDIR / ".claude" / "skills",          # 项目级 .claude/skills/
+    WORKDIR / "skills",                      # 兼容旧路径 skills/（已被迁移时仍可回退）
+]
 
 # auto_compact 前的完整对话备份（便于事后追溯）
 TRANSCRIPT_DIR: Path = WORKDIR / ".transcripts"
