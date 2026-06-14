@@ -22,6 +22,19 @@ export function shouldScheduleAutoSave(currentRoot, currentPath, pausedPath) {
   return Boolean(currentRoot && currentPath && currentPath !== pausedPath);
 }
 
+export function shouldSyncWritingScroll(sourceRole) {
+  return sourceRole === "editor";
+}
+
+export function shouldReplacePreviewHTML(nextHTML, lastHTML) {
+  return nextHTML !== lastHTML;
+}
+
+export function clampPreviewScrollTop(scrollTop, scrollHeight, clientHeight) {
+  const max = Math.max(0, Number(scrollHeight || 0) - Number(clientHeight || 0));
+  return Math.min(Math.max(0, Number(scrollTop || 0)), max);
+}
+
 function el(id) { return document.getElementById(id); }
 
 function basename(path) {
@@ -74,8 +87,10 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
   let previewTimer = null;
   let autoSaveTimer = null;
   let autoSavePausedPath = "";
+  let lastPreviewHTML = "";
   let isSaving = false;
   let isSyncingScroll = false;
+  let isRenderingPreview = false;
 
   function show(level, title, body) {
     if (notify && typeof notify.show === "function") notify.show({ level, title, body });
@@ -124,7 +139,11 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
     }
     const text = editor.value || "";
     updateStats(text);
+    const previousScrollTop = preview.scrollTop;
     if (!force && text.length > AUTO_PREVIEW_MAX_CHARS) {
+      const largeHTML = `<div class="writing-large-preview"><strong>文件较大，已暂停自动预览</strong><p>当前 ${text.length} 字符。继续编辑和保存不受影响。</p></div>`;
+      if (!shouldReplacePreviewHTML(largeHTML, lastPreviewHTML)) return;
+      isRenderingPreview = true;
       preview.innerHTML = "";
       const box = document.createElement("div");
       box.className = "writing-large-preview";
@@ -136,9 +155,21 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
       btn.addEventListener("click", () => renderPreviewNow({ force: true }));
       box.appendChild(btn);
       preview.appendChild(box);
+      lastPreviewHTML = largeHTML;
+      preview.scrollTop = clampPreviewScrollTop(previousScrollTop, preview.scrollHeight, preview.clientHeight);
+      isRenderingPreview = false;
       return;
     }
-    preview.innerHTML = renderMarkdown(text);
+    const html = renderMarkdown(text);
+    if (!shouldReplacePreviewHTML(html, lastPreviewHTML)) return;
+    isRenderingPreview = true;
+    preview.innerHTML = html;
+    lastPreviewHTML = html;
+    preview.scrollTop = clampPreviewScrollTop(previousScrollTop, preview.scrollHeight, preview.clientHeight);
+    requestAnimationFrame(() => {
+      preview.scrollTop = clampPreviewScrollTop(previousScrollTop, preview.scrollHeight, preview.clientHeight);
+      isRenderingPreview = false;
+    });
   }
 
   function updatePreview() {
@@ -463,8 +494,8 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
     }
   }
 
-  function syncScroll(source, target) {
-    if (isSyncingScroll) return;
+  function syncScroll(source, target, sourceRole) {
+    if (isRenderingPreview || !shouldSyncWritingScroll(sourceRole) || isSyncingScroll) return;
     const sourceScrollable = source.scrollHeight - source.clientHeight;
     const targetScrollable = target.scrollHeight - target.clientHeight;
     if (sourceScrollable <= 0 || targetScrollable <= 0) return;
@@ -488,8 +519,8 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
     setModified(true);
     scheduleAutoSave();
   });
-  editor.addEventListener("scroll", () => syncScroll(editor, preview));
-  preview.addEventListener("scroll", () => syncScroll(preview, editor));
+  editor.addEventListener("scroll", () => syncScroll(editor, preview, "editor"));
+  preview.addEventListener("scroll", () => syncScroll(preview, editor, "preview"));
   editor.addEventListener("keydown", (ev) => {
     if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "s") {
       ev.preventDefault();
