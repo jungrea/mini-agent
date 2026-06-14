@@ -120,3 +120,4 @@ Thumbs.db
 
 *.log
 .memory/
+tests/
