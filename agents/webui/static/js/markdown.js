@@ -1,4 +1,5 @@
 // markdown.js —— 极简安全的 markdown → HTML 渲染器。
+import { highlightCode } from "./code_highlight.js?v=1";
 //
 // 设计目标：
 //   * 纯 JS、零依赖（符合本项目"纯 ES module、无 npm 构建"的基因）
@@ -76,6 +77,15 @@ function renderInline(escapedLine) {
   return s;
 }
 
+function matchFenceStart(line) {
+  return line.match(/^\s{0,3}(`{3,}|~{3,})\s*([A-Za-z0-9_-]*)\s*$/);
+}
+
+function makeFenceCloseRe(marker) {
+  const ch = marker[0] === "`" ? "`" : "~";
+  return new RegExp(`^\\s{0,3}${ch}{${marker.length},}\\s*$`);
+}
+
 // 渲染主函数：把 markdown 字符串变成受限的 HTML 片段。
 export function renderMarkdown(src) {
   if (src == null) return "";
@@ -97,20 +107,22 @@ export function renderMarkdown(src) {
     // --- 代码块 ```lang ... ``` ---
     // 开头三个反引号被 escape 成 `&#39;`？不——反引号本身不在 escape 列表里，
     // 所以这里的 `\`\`\``` 原样存在。注意：escape 只处理 &<>"'，反引号保留。
-    const fence = line.match(/^\s{0,3}```\s*([A-Za-z0-9_-]*)\s*$/);
+    const fence = matchFenceStart(line);
     if (fence) {
-      const lang = fence[1] || "";
+      const closeFence = makeFenceCloseRe(fence[1]);
+      const lang = fence[2] || "python";
       const buf = [];
       i += 1;
-      while (i < lines.length && !/^\s{0,3}```\s*$/.test(lines[i])) {
+      while (i < lines.length && !closeFence.test(lines[i])) {
         buf.push(lines[i]);
         i += 1;
       }
       if (i < lines.length) i += 1;  // 跳过闭合 ```
       const body = buf.join("\n");
+      const highlightedBody = highlightCode(body, lang);
       const cls = lang ? ` class="lang-${escapeHTML(lang).replace(/[^a-zA-Z0-9_\-]/g, "")}"` : "";
       const langLabel = lang ? `<span class="code-lang">${escapeHTML(lang)}</span>` : "";
-      out.push(`<pre class="code-block">${langLabel}<code${cls}>${body}</code></pre>`);
+      out.push(`<pre class="code-block">${langLabel}<code${cls}>${highlightedBody}</code></pre>`);
       continue;
     }
 
@@ -199,7 +211,7 @@ export function renderMarkdown(src) {
       i < lines.length &&
       !/^\s*$/.test(lines[i]) &&
       !/^#{1,6}\s+/.test(lines[i]) &&
-      !/^\s{0,3}```/.test(lines[i]) &&
+      !matchFenceStart(lines[i]) &&
       !/^&gt;\s?/.test(lines[i]) &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i]) &&

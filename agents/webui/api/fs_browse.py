@@ -70,7 +70,8 @@ def fs_home():
 def fs_list(
     path: str = Query("", description="绝对路径；空字符串 = $HOME"),
     show_hidden: int = Query(0, description="1=列出 . 开头的目录"),
-    limit: int = Query(500, description="单次最多返回多少子目录，防止巨型目录拖死前端"),
+    limit: int = 200,
+    max_scan: int = 1000,
 ):
     """
     列出 `path` 下的子目录。
@@ -88,11 +89,22 @@ def fs_list(
     if not os.access(p, os.R_OK):
         raise HTTPException(403, f"permission denied: {p}")
 
+    if limit < 1 or limit > 1000:
+        raise HTTPException(400, "limit must be between 1 and 1000")
+    if max_scan < 1 or max_scan > 10000:
+        raise HTTPException(400, "max_scan must be between 1 and 10000")
+
     entries: list[dict] = []
+    truncated = False
+    scanned = 0
     try:
         # scandir 比 listdir + stat 一次次调要快得多；is_dir() 也避免双 syscall
         with os.scandir(p) as it:
             for entry in it:
+                if scanned >= max_scan:
+                    truncated = True
+                    break
+                scanned += 1
                 name = entry.name
                 if not show_hidden and name.startswith("."):
                     continue
@@ -102,6 +114,9 @@ def fs_list(
                 except OSError:
                     # 软链断了 / 权限不足读不到 dirent 元数据 → 跳过
                     continue
+                if len(entries) >= limit:
+                    truncated = True
+                    break
                 full = (p / name).resolve(strict=False)
                 entries.append({
                     "name": name,
@@ -114,13 +129,8 @@ def fs_list(
     except OSError as e:
         raise HTTPException(500, f"failed to list {p}: {e}") from e
 
-    # 按名字（不区分大小写）排序，目录浏览的最自然顺序
+    # 按名字（不区分大小写）排序当前批次，避免巨型目录拖死前端
     entries.sort(key=lambda e: e["name"].lower())
-    if len(entries) > limit:
-        entries = entries[:limit]
-        truncated = True
-    else:
-        truncated = False
 
     parent: Optional[str]
     if p.parent == p:  # 已到根 "/"

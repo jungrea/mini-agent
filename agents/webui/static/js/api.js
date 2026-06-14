@@ -45,6 +45,14 @@ export const api = {
 
   // 服务端目录浏览（"📂 浏览"按钮的支撑 API）
   fsHome:         ()                       => req("GET",    "/api/fs/home"),
-  fsList:         (path, showHidden)       => req("GET",
-      `/api/fs/list?path=${encodeURIComponent(path || "")}&show_hidden=${showHidden ? 1 : 0}`),
+  fsList:         (path, showHidden, limit = 200, maxScan = 1000) => req("GET",
+      `/api/fs/list?path=${encodeURIComponent(path || "")}&show_hidden=${showHidden ? 1 : 0}&limit=${encodeURIComponent(limit)}&max_scan=${encodeURIComponent(maxScan)}`),
+
+  writingList:    (path, limit = 200, maxScan = 1000) => req("GET",
+      `/api/writing/list?path=${encodeURIComponent(path || "")}&limit=${encodeURIComponent(limit)}&max_scan=${encodeURIComponent(maxScan)}`),
+  writingRead:    (root, path)             => req("GET",
+      `/api/writing/read?root=${encodeURIComponent(root || "")}&path=${encodeURIComponent(path || "")}`),
+  writingWrite:   (root, path, content)    => req("POST",   "/api/writing/write", { root, path, content }),
+  writingCreate:  (root, name, content)    => req("POST",   "/api/writing/create", { root, name, content }),
+  writingDelete:  (root, path)             => req("POST",   "/api/writing/delete", { root, path }),
 };

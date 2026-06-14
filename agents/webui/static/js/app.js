@@ -4,10 +4,10 @@
 // 的强缓存。修改任何 js 模块后，递增对应 import 的 ?v= 版本号；若改了
 // app.js 自身，同步更新 index.html 里的主入口 app.js?v=，浏览器会重新下载模块。
 
-import { api }            from "./api.js?v=18";
+import { api }            from "./api.js?v=21";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=25";
+import { chat }           from "./chat.js?v=28";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";
@@ -15,6 +15,7 @@ import { initSlash }      from "./slash.js?v=17";
 import { permission }     from "./permission.js?v=17";
 import { phase }          from "./phase.js?v=17";
 import { theme }          from "./theme.js?v=17";
+import { initWriting }    from "./writing.js?v=7";
 
 let currentSessionId = null;
 let sessionsUI;
@@ -26,9 +27,45 @@ const cronUI = {
   appendLog: () => {},
 };
 
+function initAppTabs() {
+  const codeTab = document.getElementById("codeTab");
+  const writingTab = document.getElementById("writingTab");
+  const codeSidebar = document.getElementById("codeSidebar");
+  const writingSidebar = document.getElementById("writingSidebar");
+  const codeMain = document.getElementById("main");
+  const writingMain = document.getElementById("writingMain");
+  if (!codeTab || !writingTab || !codeSidebar || !writingSidebar || !codeMain || !writingMain) return;
+
+  function setTab(tab) {
+    const writing = tab === "writing";
+    codeTab.classList.toggle("active", !writing);
+    writingTab.classList.toggle("active", writing);
+    codeTab.setAttribute("aria-selected", String(!writing));
+    writingTab.setAttribute("aria-selected", String(writing));
+
+    codeSidebar.classList.toggle("is-hidden", writing);
+    codeSidebar.style.display = writing ? "none" : "";
+    writingSidebar.classList.toggle("is-hidden", !writing);
+    writingSidebar.style.display = writing ? "" : "none";
+
+    codeMain.classList.toggle("is-hidden", writing);
+    codeMain.style.display = writing ? "none" : "";
+    writingMain.classList.toggle("is-hidden", !writing);
+    writingMain.style.display = writing ? "" : "none";
+  }
+
+  codeTab.addEventListener("click", () => setTab("code"));
+  writingTab.addEventListener("click", () => setTab("writing"));
+  setTab("code");
+}
+
 async function init() {
   // -- 主题切换（先于其它 UI 初始化，避免按钮图标闪烁） --
   theme.init();
+
+  // -- Code / 写作 Tab --
+  initAppTabs();
+  await initWriting({ openFolderPicker, notify });
 
   // -- 面板 --
   sessionsUI = makeSessions({

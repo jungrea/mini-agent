@@ -7,6 +7,7 @@ from .fs_browse import router as fs_browse_router
 from .sessions import router as sessions_router
 from .stream import router as stream_router
 from .ws import router as ws_router
+from .writing import router as writing_router
 
 
 api_router = APIRouter()
@@ -15,3 +16,4 @@ api_router.include_router(stream_router)
 api_router.include_router(ws_router)
 api_router.include_router(cron_router)
 api_router.include_router(fs_browse_router)
+api_router.include_router(writing_router)

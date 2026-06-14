@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>mini-agent WebUI</title>
-<link rel="stylesheet" href="/static/css/app.css?v=20" />
+<link rel="stylesheet" href="/static/css/app.css?v=24" />
 <script>
   // 主题首帧防闪烁：在样式应用前把上次选择写到 <html data-theme>。
   // localStorage 可能被浏览器禁用（隐私模式等），做好容错。
@@ -58,22 +58,42 @@
 
 <!-- ========== Main Layout ========== -->
 <div id="app">
-  <!-- 左栏：会话列表 + cron 面板 -->
   <aside id="sidebar">
-    <section class="sidebar-block">
-      <div class="sidebar-head">
-        <span>会话</span>
-        <button id="newSessionBtn" class="btn-primary">+ 新建</button>
-      </div>
-      <ul id="sessionList" class="session-list"></ul>
-    </section>
+    <div class="app-tabs" role="tablist" aria-label="功能切换">
+      <button id="codeTab" class="app-tab active" type="button" role="tab" aria-selected="true">代码</button>
+      <button id="writingTab" class="app-tab" type="button" role="tab" aria-selected="false">写作</button>
+    </div>
+
+    <div id="codeSidebar" class="sidebar-pane">
+      <section class="sidebar-block">
+        <div class="sidebar-head">
+          <span>会话</span>
+          <button id="newSessionBtn" class="btn-primary">+ 新建会话</button>
+        </div>
+        <ul id="sessionList" class="session-list"></ul>
+      </section>
+    </div>
+
+    <div id="writingSidebar" class="sidebar-pane is-hidden" style="display:none">
+      <section class="sidebar-block writing-sidebar-block">
+        <div class="writing-actions">
+          <button id="writingNewFile" class="writing-action-btn" type="button">⌘ 新建文件</button>
+          <button id="writingPickRoot" class="writing-action-btn" type="button">📁 添加写作空间</button>
+        </div>
+        <div class="sidebar-head writing-space-head">
+          <span>写作空间</span>
+          <button id="writingAddRoot" class="btn-ghost" type="button" title="添加写作空间">＋</button>
+        </div>
+        <ul id="writingWorkspaceList" class="writing-workspace-list"></ul>
+      </section>
+    </div>
   </aside>
 
-  <!-- 中栏：对话流 -->
-  <main id="main">
+  <!-- Code：对话流 -->
+  <main id="main" class="code-main">
     <div id="messages" class="messages">
       <div class="empty-hint" id="emptyHint">
-        点击左上角「+ 新建」开启一段对话。
+        点击左上角「+ 新建会话」开启一段对话。
       </div>
     </div>
 
@@ -93,6 +113,35 @@
       <button id="sendBtn" class="btn-send">发送</button>
       <button id="stopBtn" class="btn-stop is-hidden" style="display:none" title="停止当前对话（Ctrl+. 或 Esc）">停止</button>
     </div>
+  </main>
+
+  <!-- Writing：Markdown 编辑器 -->
+  <main id="writingMain" class="writing-main is-hidden" style="display:none">
+    <header class="writing-toolbar">
+      <div class="writing-file-card">
+        <div id="writingFileName" class="writing-file-name">未打开文件</div>
+        <div id="writingStatus" class="writing-status">请选择写作空间</div>
+      </div>
+      <div class="writing-toolbar-actions">
+        <button id="writingSave" class="btn-primary" type="button">保存</button>
+      </div>
+    </header>
+    <section class="writing-workspace">
+      <div class="writing-pane">
+        <div class="writing-pane-head">
+          <span>编辑</span>
+          <span id="writingStats" class="writing-pane-note">0 字符</span>
+        </div>
+        <textarea id="writingEditor" class="writing-editor" spellcheck="false" placeholder="# 开始写作&#10;&#10;先选择写作空间，或新建一个 Markdown 文件。"></textarea>
+      </div>
+      <div class="writing-pane">
+        <div class="writing-pane-head">
+          <span>预览</span>
+          <span class="writing-pane-note">实时渲染</span>
+        </div>
+        <article id="writingPreview" class="writing-preview md-body"></article>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -202,6 +251,6 @@
 </div>
 
 <!-- ========== Scripts (native ES modules, no build step) ========== -->
-<script type="module" src="/static/js/app.js?v=30"></script>
+<script type="module" src="/static/js/app.js?v=37"></script>
 </body>
 </html>
