@@ -10,6 +10,18 @@ const PREVIEW_DEBOUNCE_MS = 250;
 const AUTO_PREVIEW_MAX_CHARS = 120000;
 const AUTO_SAVE_DELAY_MS = 1200;
 
+export function shouldRetryAutoSave(error) {
+  const message = String(error?.message || error || "");
+  const status = message.match(/^\s*(\d{3})\b/);
+  if (!status) return true;
+  const code = Number(status[1]);
+  return code >= 500;
+}
+
+export function shouldScheduleAutoSave(currentRoot, currentPath, pausedPath) {
+  return Boolean(currentRoot && currentPath && currentPath !== pausedPath);
+}
+
 function el(id) { return document.getElementById(id); }
 
 function basename(path) {
@@ -61,6 +73,7 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
   let modified = false;
   let previewTimer = null;
   let autoSaveTimer = null;
+  let autoSavePausedPath = "";
   let isSaving = false;
   let isSyncingScroll = false;
 
@@ -88,7 +101,10 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
 
   function scheduleAutoSave() {
     cancelAutoSave();
-    if (!currentRoot || !currentPath) return;
+    if (!shouldScheduleAutoSave(currentRoot, currentPath, autoSavePausedPath)) {
+      if (currentPath) setStatus("未保存 · 自动保存已暂停，请手动保存");
+      return;
+    }
     setStatus("未保存 · 将自动保存");
     autoSaveTimer = setTimeout(() => {
       autoSaveTimer = null;
@@ -132,6 +148,7 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
 
   function clearEditor() {
     cancelAutoSave();
+    autoSavePausedPath = "";
     currentRoot = "";
     currentPath = "";
     currentName = "未打开文件";
@@ -327,6 +344,7 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
       const res = await api.writingRead(root, path);
       currentRoot = res.root;
       currentPath = res.path;
+      autoSavePausedPath = "";
       currentName = res.name || basename(res.path);
       setActiveRoot(currentRoot);
       editor.value = res.content || "";
@@ -412,13 +430,17 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
     setStatus(auto ? "自动保存中…" : "保存中…");
     try {
       await api.writingWrite(currentRoot, currentPath, editor.value || "");
+      autoSavePausedPath = "";
       setModified(false);
       setStatus(auto ? `已自动保存 ${currentName}` : `已保存 ${currentName}`);
       if (!auto) show("info", "已保存", currentName);
     } catch (e) {
-      setStatus(auto ? "自动保存失败" : "保存失败");
+      const retryable = shouldRetryAutoSave(e);
+      const retry = auto && modified && retryable;
+      if (!retryable) autoSavePausedPath = currentPath;
+      setStatus(auto && !retry ? "自动保存失败 · 已暂停自动保存" : (auto ? "自动保存失败" : "保存失败"));
       show("error", auto ? "自动保存失败" : "保存失败", e.message);
-      if (auto && modified) scheduleAutoSave();
+      if (retry) scheduleAutoSave();
     } finally {
       isSaving = false;
       setModified(modified);
