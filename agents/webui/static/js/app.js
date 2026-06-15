@@ -7,7 +7,7 @@
 import { api }            from "./api.js?v=21";
 import { stream }         from "./stream.js?v=17";
 import { ws }             from "./ws.js?v=17";
-import { chat }           from "./chat.js?v=28";
+import { chat }           from "./chat.js?v=29";
 import { hud }            from "./hud.js?v=17";
 import { notify }         from "./notify.js?v=17";
 import { makeSessions }   from "./sessions.js?v=19";
@@ -15,7 +15,7 @@ import { initSlash }      from "./slash.js?v=17";
 import { permission }     from "./permission.js?v=17";
 import { phase }          from "./phase.js?v=17";
 import { theme }          from "./theme.js?v=17";
-import { initWriting }    from "./writing.js?v=11";
+import { initWriting }    from "./writing.js?v=12";
 
 let currentSessionId = null;
 let sessionsUI;

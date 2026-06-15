@@ -1749,6 +1749,16 @@ input, textarea, select { font: inherit; color: inherit; }
   background: var(--writing-primary-soft);
   border-radius: 4px;
 }
+.writing-preview.md-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  max-height: 72vh;
+  margin: 1.35em auto;
+  border-radius: 14px;
+  object-fit: contain;
+  box-shadow: var(--writing-shadow-soft);
+}
 .writing-preview.md-body strong {
   color: var(--writing-strong-color);
   font-weight: 850;

@@ -16,6 +16,7 @@ import { highlightCode } from "./code_highlight.js?v=1";
 //   * 粗体 **text** / __text__
 //   * 斜体 *text* / _text_
 //   * 链接 [text](url)     —— 仅允许 http/https/mailto 协议，其它会被原样保留为文本
+//   * 图片 ![alt](path)    —— 仅支持写作空间内的本地图片，经 /api/writing/asset 读取
 //   * 无序列表 `- `、`* `、`+ `
 //   * 有序列表 `1. `、`2. ` 等
 //   * 引用 `> `（连续几行会被合并进同一个 <blockquote>）
@@ -27,13 +28,15 @@ import { highlightCode } from "./code_highlight.js?v=1";
 // 不支持（故意）：
 //   * 嵌套列表（按单层解析）
 //   * HTML 原样透传（安全风险）
-//   * 图片（规避加载本地 / 第三方资源的风险）
+//   * 任意本地 / 第三方图片直连（图片只允许走写作空间 asset 代理）
 //   * 脚注 / 定义列表 / 任务列表 / 双删除线等
 //
 // 如果将来确实需要更完整的支持，推荐接 marked + DOMPurify 的 CDN 版；
 // 本实现刻意不走那条路，保持项目"零构建、零依赖"的承诺。
 
 const URL_SAFE_RE = /^(https?:\/\/|mailto:)/i;
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const IMAGE_SUFFIX_RE = /\.(png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i;
 
 function escapeHTML(s) {
   return String(s == null ? "" : s)
@@ -41,9 +44,46 @@ function escapeHTML(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-// 行内级别：粗体 / 斜体 / 行内代码 / 链接。
+function unescapeMarkdownURL(s) {
+  return String(s || "")
+    .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+function dirname(path) {
+  const parts = String(path || "").split("/");
+  parts.pop();
+  return parts.join("/") || "/";
+}
+
+function normalizePosixPath(path) {
+  const absolute = String(path || "").startsWith("/");
+  const stack = [];
+  for (const part of String(path || "").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") stack.pop();
+    else stack.push(part);
+  }
+  return (absolute ? "/" : "") + stack.join("/");
+}
+
+function isLocalImageURL(url) {
+  const clean = unescapeMarkdownURL(url).trim();
+  return Boolean(clean && !clean.startsWith("#") && !clean.startsWith("//") && !URL_SCHEME_RE.test(clean) && IMAGE_SUFFIX_RE.test(clean));
+}
+
+export function buildWritingAssetURL(url, context = {}) {
+  const root = String(context.root || "");
+  const currentPath = String(context.path || context.currentPath || "");
+  const clean = unescapeMarkdownURL(url).trim();
+  if (!root || !currentPath || !isLocalImageURL(clean)) return "";
+  const assetPath = normalizePosixPath(clean.startsWith("/") ? clean : `${dirname(currentPath)}/${clean}`);
+  return `/api/writing/asset?root=${encodeURIComponent(root)}&path=${encodeURIComponent(assetPath)}`;
+}
+
+// 行内级别：粗体 / 斜体 / 行内代码 / 图片 / 链接。
 // 处理顺序重要——先抽行内代码再做粗体斜体，避免代码里的星号被误判。
-function renderInline(escapedLine) {
+function renderInline(escapedLine, options = {}) {
   let s = escapedLine;
 
   // 1) 行内代码：先把内容用占位符抠出来（反引号之间的不再参与后续替换）
@@ -63,13 +103,20 @@ function renderInline(escapedLine) {
   s = s.replace(/(^|[^*])\*([^\s*][^*]*?[^\s*]|\S)\*(?!\*)/g, "$1<em>$2</em>");
   s = s.replace(/(^|[^_])_([^\s_][^_]*?[^\s_]|\S)_(?!_)/g, "$1<em>$2</em>");
 
-  // 4) 链接 [text](url)。url 只允许 http/https/mailto；否则原样不做链接化
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (full, text, url) => {
-    if (!URL_SAFE_RE.test(url)) return full;
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  // 4) 图片 ![alt](path)。只允许写作空间内本地图片，通过后端 asset 代理读取。
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (full, alt, url) => {
+    const src = buildWritingAssetURL(url, options);
+    if (!src) return full;
+    return `<img src="${src}" alt="${alt}" loading="lazy" decoding="async">`;
   });
 
-  // 5) 回填行内代码
+  // 5) 链接 [text](url)。url 只允许 http/https/mailto；且不把 ![alt](url) 误识别成链接。
+  s = s.replace(/(^|[^!])\[([^\]]+)\]\(([^)\s]+)\)/g, (full, prefix, text, url) => {
+    if (!URL_SAFE_RE.test(url)) return full;
+    return `${prefix}<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  });
+
+  // 6) 回填行内代码
   s = s.replace(/\u0000CODE(\d+)\u0000/g, (_, idx) => {
     return `<code>${codes[Number(idx)]}</code>`;
   });
@@ -87,7 +134,7 @@ function makeFenceCloseRe(marker) {
 }
 
 // 渲染主函数：把 markdown 字符串变成受限的 HTML 片段。
-export function renderMarkdown(src) {
+export function renderMarkdown(src, options = {}) {
   if (src == null) return "";
   const text = String(src);
 
@@ -157,7 +204,7 @@ export function renderMarkdown(src) {
     const h = line.match(/^(#{1,6})\s+(.*\S)\s*$/);
     if (h) {
       const level = h[1].length;
-      out.push(`<h${level}>${renderInline(h[2])}</h${level}>`);
+      out.push(`<h${level}>${renderInline(h[2], options)}</h${level}>`);
       i += 1;
       continue;
     }
@@ -173,7 +220,7 @@ export function renderMarkdown(src) {
         buf.push(lines[i].replace(/^&gt;\s?/, ""));
         i += 1;
       }
-      out.push(`<blockquote>${renderInline(buf.join("<br>"))}</blockquote>`);
+      out.push(`<blockquote>${renderInline(buf.join("<br>"), options)}</blockquote>`);
       continue;
     }
 
@@ -184,7 +231,7 @@ export function renderMarkdown(src) {
         items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
         i += 1;
       }
-      out.push("<ul>" + items.map(t => `<li>${renderInline(t)}</li>`).join("") + "</ul>");
+      out.push("<ul>" + items.map(t => `<li>${renderInline(t, options)}</li>`).join("") + "</ul>");
       continue;
     }
 
@@ -195,7 +242,7 @@ export function renderMarkdown(src) {
         items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
         i += 1;
       }
-      out.push("<ol>" + items.map(t => `<li>${renderInline(t)}</li>`).join("") + "</ol>");
+      out.push("<ol>" + items.map(t => `<li>${renderInline(t, options)}</li>`).join("") + "</ol>");
       continue;
     }
 
@@ -222,7 +269,7 @@ export function renderMarkdown(src) {
       i += 1;
     }
     if (buf.length) {
-      out.push(`<p>${renderInline(buf.join("<br>"))}</p>`);
+      out.push(`<p>${renderInline(buf.join("<br>"), options)}</p>`);
     }
   }
 
@@ -267,10 +314,10 @@ function alignAttr(a) {
   return a ? ` style="text-align:${a}"` : "";
 }
 
-function renderTable(headerCells, aligns, rows) {
+function renderTable(headerCells, aligns, rows, options = {}) {
   const thead = "<thead><tr>" +
     headerCells.map((c, idx) =>
-      `<th${alignAttr(aligns[idx])}>${renderInline(c)}</th>`
+      `<th${alignAttr(aligns[idx])}>${renderInline(c, options)}</th>`
     ).join("") +
     "</tr></thead>";
 
@@ -280,7 +327,7 @@ function renderTable(headerCells, aligns, rows) {
         const cells = [];
         const n = headerCells.length;
         for (let k = 0; k < n; k++) {
-          cells.push(`<td${alignAttr(aligns[k])}>${renderInline(r[k] == null ? "" : r[k])}</td>`);
+          cells.push(`<td${alignAttr(aligns[k])}>${renderInline(r[k] == null ? "" : r[k], options)}</td>`);
         }
         return "<tr>" + cells.join("") + "</tr>";
       }).join("") + "</tbody>"

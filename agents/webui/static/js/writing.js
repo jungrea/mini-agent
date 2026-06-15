@@ -1,5 +1,5 @@
 import { api } from "./api.js?v=21";
-import { renderMarkdown } from "./markdown.js?v=22";
+import { renderMarkdown } from "./markdown.js?v=23";
 
 const WORKSPACES_KEY = "mini-agent-writing-workspaces";
 const LEGACY_ROOT_KEY = "mini-agent-writing-root";
@@ -160,7 +160,7 @@ export async function initWriting({ openFolderPicker, notify } = {}) {
       isRenderingPreview = false;
       return;
     }
-    const html = renderMarkdown(text);
+    const html = renderMarkdown(text, { root: currentRoot, path: currentPath });
     if (!shouldReplacePreviewHTML(html, lastPreviewHTML)) return;
     isRenderingPreview = true;
     preview.innerHTML = html;

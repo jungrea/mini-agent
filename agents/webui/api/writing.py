@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 
 router = APIRouter(prefix="/api/writing")
 
 _ALLOWED_SUFFIXES = {".md", ".markdown", ".txt"}
+_ALLOWED_ASSET_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+_MAX_ASSET_BYTES = 20 * 1024 * 1024
 _SENSITIVE_DIRS = tuple(
     Path(p).resolve()
     for p in (
@@ -86,6 +90,23 @@ def _validate_file_path(raw_path: str, root: Path, *, must_exist: bool) -> Path:
     return path
 
 
+def _validate_asset_path(raw_path: str, root: Path) -> Path:
+    path = _abs(raw_path)
+    if not _is_relative_to(path, root):
+        raise HTTPException(403, "asset is outside writing root")
+    if path.suffix.lower() not in _ALLOWED_ASSET_SUFFIXES:
+        raise HTTPException(400, "only image assets are allowed")
+    if not path.exists():
+        raise HTTPException(404, f"asset not found: {path}")
+    if not path.is_file():
+        raise HTTPException(400, f"not a file: {path}")
+    if not os.access(path, os.R_OK):
+        raise HTTPException(403, f"permission denied: {path}")
+    if path.stat().st_size > _MAX_ASSET_BYTES:
+        raise HTTPException(413, "image asset is too large")
+    return path
+
+
 def _safe_create_path(root: Path, name: str) -> Path:
     clean = Path(name.strip())
     if clean.name != name.strip() or clean.name in {"", ".", ".."}:
@@ -144,6 +165,21 @@ def list_writing_files(
 
     files.sort(key=lambda item: item["name"].lower())
     return {"root": str(root), "files": files, "truncated": truncated}
+
+
+@router.get("/asset")
+def read_writing_asset(
+    root: str = Query(..., description="写作空间目录"),
+    path: str = Query(..., description="图片绝对路径"),
+):
+    root_path = _validate_root(root)
+    asset_path = _validate_asset_path(path, root_path)
+    media_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
+    return FileResponse(
+        str(asset_path),
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @router.get("/read")
