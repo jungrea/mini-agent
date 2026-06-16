@@ -15,7 +15,7 @@ import { initSlash }      from "./slash.js?v=17";
 import { permission }     from "./permission.js?v=17";
 import { phase }          from "./phase.js?v=17";
 import { theme }          from "./theme.js?v=17";
-import { initWriting }    from "./writing.js?v=12";
+import { initWriting }    from "./writing.js?v=13";
 
 let currentSessionId = null;
 let sessionsUI;

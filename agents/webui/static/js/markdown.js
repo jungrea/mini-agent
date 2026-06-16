@@ -270,6 +270,9 @@ export function renderMarkdown(src, options = {}) {
     }
     if (buf.length) {
       out.push(`<p>${renderInline(buf.join("<br>"), options)}</p>`);
+    } else {
+      out.push(`<p>${renderInline(line, options)}</p>`);
+      i += 1;
     }
   }
 

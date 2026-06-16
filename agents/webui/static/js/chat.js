@@ -1,5 +1,5 @@
 // chat.js —— 对话流渲染。
-import { renderMarkdown } from "./markdown.js?v=23";
+import { renderMarkdown } from "./markdown.js?v=24";
 
 function escapeHTML(s) {
   return String(s == null ? "" : s)

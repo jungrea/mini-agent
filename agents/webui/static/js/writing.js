@@ -1,5 +1,5 @@
 import { api } from "./api.js?v=21";
-import { renderMarkdown } from "./markdown.js?v=23";
+import { renderMarkdown } from "./markdown.js?v=24";
 
 const WORKSPACES_KEY = "mini-agent-writing-workspaces";
 const LEGACY_ROOT_KEY = "mini-agent-writing-root";
