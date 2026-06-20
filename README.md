@@ -8,7 +8,7 @@
 
 ---
 
-![WebUI 截图](webui.gif)
+![WebUI 截图](https://raw.githubusercontent.com/jungrea/mini-agent/main/webui.gif)
 
 ---
 
