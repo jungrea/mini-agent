@@ -121,3 +121,8 @@ Thumbs.db
 *.log
 .memory/
 tests/
+
+
+# -------------------- 截图工具产物 --------------------
+
+.playwright-cli/

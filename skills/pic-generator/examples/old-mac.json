@@ -1,0 +1,28 @@
+{
+  "title_line1": "老 Mac 装上",
+  "title_line2": "Mini Agent 焕发新生",
+  "subtitle": "给十年老机注入 AI 能力，一句话清理 100G 旧文件，丝滑如新机",
+  "theme": "cyan-blue",
+  "badge_text": "2015 MacBook · Mini Agent 实战",
+  "tags": [
+    {"icon": "⚡", "text": "Python 3.10+"},
+    {"icon": "🤖", "text": "类 Claude Code"},
+    {"icon": "💰", "text": "DeepSeek 加持"}
+  ],
+  "graphic": "mac",
+  "graphic_config": {
+    "screen_title": "mini-agent ~ zsh",
+    "badge_text": "AI",
+    "badge_sub": "POWERED",
+    "reborn_label": "+100G 焕新",
+    "lines": [
+      {"type": "prompt", "text": "分析一下我的 Mac 内存"},
+      {"type": "output", "text": "扫描磁盘使用情况..."},
+      {"type": "output", "text": "发现 120G 可清理文件"},
+      {"type": "prompt", "text": "删掉 2025 之前的旧文件"},
+      {"type": "success", "text": "已释放 100GB 空间"}
+    ]
+  },
+  "footer": "MINI AGENT · 让老设备重生",
+  "output_name": "old-mac"
+}

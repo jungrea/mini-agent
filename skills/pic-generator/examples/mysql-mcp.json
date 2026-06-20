@@ -1,0 +1,28 @@
+{
+  "title_line1": "实战之：构建",
+  "title_line2": "MySQL 高性能 MCP",
+  "subtitle": "高危拦截·超时保护·并发无忧·结构化返回，让大模型安全高效地自主查询数据库",
+  "series": "mcp",
+  "theme": "blue-purple",
+  "badge_text": "MySQL · MCP 实战",
+  "tags": [
+    {"icon": "🛡️", "text": "SQL 安全拦截"},
+    {"icon": "⏱️", "text": "超时保护"},
+    {"icon": "⚡", "text": "async 并发"},
+    {"icon": "📋", "text": "结构化返回"}
+  ],
+  "graphic": "database",
+  "graphic_config": {
+    "badge_text": "MCP",
+    "badge_sub": "SERVER",
+    "perf_label": "高性能",
+    "rows": [
+      {"icon": "✓", "icon_type": "safe", "text": "SELECT * FROM users"},
+      {"icon": "⏱", "icon_type": "timeout", "text": "timeout: 30s"},
+      {"icon": "⚡", "icon_type": "async", "text": "async + to_thread"},
+      {"icon": "{ }", "icon_type": "schema", "text": "{\"状态\":\"成功\", ...}"}
+    ]
+  },
+  "footer": "MYSQL MCP · 高性能数据库工具",
+  "output_name": "mysql-mcp"
+}
