@@ -740,7 +740,11 @@ def agent_loop(messages: list,
             t0 = _time_now()
             error = False
             try:
-                output = handler(**item["tool_input"]) if handler \
+                tool_input = item["tool_input"]
+                if b.name == "bash" and cancel_check is not None:
+                    tool_input = dict(tool_input)
+                    tool_input["cancel_check"] = cancel_check
+                output = handler(**tool_input) if handler \
                     else f"Unknown tool: {b.name}"
             except Exception as e:
                 output = f"Error: {e}"

@@ -58,7 +58,12 @@ PARALLEL_SAFE: frozenset[str] = frozenset({
 
 TOOL_HANDLERS: dict = {
     # --- 基础 I/O（s02） ---
-    "bash":             lambda **kw: run_bash(kw["command"], kw.get("tool_use_id", "")),
+    "bash":             lambda **kw: run_bash(
+        kw["command"],
+        kw.get("tool_use_id", ""),
+        kw.get("timeout", 120),
+        kw.get("cancel_check"),
+    ),
     "read_file":        lambda **kw: run_read(kw["path"], kw.get("tool_use_id", ""), kw.get("limit")),
     "write_file":       lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file":        lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
@@ -144,7 +149,9 @@ TOOL_HANDLERS: dict = {
 TOOLS: list[dict] = [
     {"name": "bash", "description": "Run a shell command.",
      "input_schema": {"type": "object",
-                      "properties": {"command": {"type": "string"}},
+                      "properties": {"command": {"type": "string"},
+                                     "timeout": {"type": "integer",
+                                                 "description": "Timeout in seconds. Default 120."}},
                       "required": ["command"]}},
     {"name": "read_file", "description": "Read file contents.",
      "input_schema": {"type": "object",

@@ -9,12 +9,12 @@ managers/background —— s08 后台任务。
 
 from __future__ import annotations
 
-import subprocess
 import threading
 import uuid
 from queue import Queue
 
 from ..core.config import WORKDIR
+from ..tools.bash import run_shell_command
 
 
 class BackgroundManager:
@@ -46,17 +46,17 @@ class BackgroundManager:
     def _exec(self, tid: str, command: str, timeout: int) -> None:
         """真正执行命令的 worker（跑在后台线程里）。"""
         try:
-            r = subprocess.run(
-                command,
-                shell=True,
-                cwd=WORKDIR,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            result = run_shell_command(command, cwd=WORKDIR, timeout=timeout)
             # 输出上限 50000 字符，防止长 stream 把内存吃满
-            output = (r.stdout + r.stderr).strip()[:50000]
-            self.tasks[tid].update({"status": "completed", "result": output or "(no output)"})
+            output = result.output[:50000]
+            if result.timed_out:
+                text = f"Error: Timeout ({timeout}s)" + (f"\n{output}" if output else "")
+                self.tasks[tid].update({"status": "error", "result": text})
+            elif result.cancelled:
+                text = "Error: Cancelled" + (f"\n{output}" if output else "")
+                self.tasks[tid].update({"status": "error", "result": text})
+            else:
+                self.tasks[tid].update({"status": "completed", "result": output or "(no output)"})
         except Exception as e:
             self.tasks[tid].update({"status": "error", "result": str(e)})
 

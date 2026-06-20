@@ -8,6 +8,10 @@
 
 ---
 
+![WebUI 截图](webui.gif)
+
+---
+
 ## 亮点
 
 - **两种入口**：命令行 REPL（`python -m agents`） 与 浏览器 WebUI（`python -m agents.webui`），共用同一套 agent 核心
