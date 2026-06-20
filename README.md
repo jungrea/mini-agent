@@ -26,6 +26,7 @@
 - **多会话隔离（WebUI）**：每个会话独立 history + 独立权限管理器，持久化到 `.claude/webui_sessions/`，刷新不丢
 - **并行工具执行**：`read_file` / `search_content` / `web_*` 等只读安全工具自动进入并行桶，LLM 同一轮并发请求多个时显著提速；其余工具仍串行以保证顺序与权限交互
 - **WebUI 主题切换**：右上角月亮 / 太阳按钮一键切换暗/亮两套 CSS 变量主题，选择持久化到 localStorage
+- **WebUI 内置 Markdown 写作页**：在浏览器中直接编辑 `.md` / `.markdown` / `.txt` 文件，支持实时预览、自动保存、字符统计、图片资产管理；兼顾 LLM 写作草稿与本地文件安全（路径白名单+敏感目录拦截）
 - **消息结构安检**：每次 LLM 调用前走 `normalize_messages`，重排 user 块、补缺失 `tool_result`、剥内部字段、兜底空 content，避免因结构瑕疵被 Anthropic API 拒绝
 - **极小依赖**：核心只要 `anthropic` + `python-dotenv`；WebUI 额外 `fastapi` + `uvicorn` + `pydantic`，前端纯原生 HTML/CSS/ES module，**无 npm 构建**
 
@@ -45,6 +46,8 @@ cp .env.example .env
 ```
 
 Python ≥ 3.10（使用了 `Path.is_relative_to`、PEP 604 `X | None` 等新语法）。
+
+> **⚠️ 注意**：以下命令使用 `python`，如果你的环境需要 `python3` 才能启动 Python 3，请自行替换（如 `python3 -m agents`）。
 
 ### 2. 选择入口
 
@@ -284,6 +287,7 @@ WebUI 在记忆抓取期间显示"更新记忆中…"，新增/整理时弹 NOTI
 - **会话按工作区分组**：左栏会话列表自动以 workdir 聚合成可折叠分组（黄色文件夹图标 + 会话计数徽章），折叠状态写 localStorage；包含当前会话的分组始终保持展开
 - **斜杠补全**：输入 `/` 弹浮层，↑↓ 选择，Enter 执行，Tab 补全
 - **权限模态框**：显示工具名 + 参数 JSON + 倒计时；Enter 允许 / Esc 拒绝，180s 无响应按拒绝处理
+- **Markdown 写作页**：左侧文件树浏览当前工作区，右侧实时预览编辑器；支持自动保存（防丢稿）、字符/行数统计、粘贴图片自动上传为资产、拖拽上传、路径白名单 + 敏感目录拦截双重安全保护
 - **通知 toast**：cron 触发、auto_run 完成、错误按严重度着色滑入右下
 - **暗/亮主题**：右上角 🌙 / ☀ 按钮一键切换，`:root[data-theme="light"]` 覆盖一套 CSS 变量完成整页换肤；`<head>` 内联 script 读 localStorage 防首帧闪屏，选择持久化
 
