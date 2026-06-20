@@ -428,6 +428,38 @@ LLM_THINKING_BUDGET=4096     # 开启 thinking 时的预算
 
 ---
 
+## 教程系列
+
+项目附带 22 篇循序渐进的中文教程，位于 [`doc/`](doc/) 目录，逐模块拆解 Agent 的设计思路与代码实现：
+
+| 阶段 | 章节 | 主题 |
+|------|------|------|
+| 入门 | s00 | [从一个普通的对话开始](doc/doc_learn/s00_从一个普通的对话开始.md) |
+| | s01 | [agent_loop 主循环](doc/doc_learn/s01_agent_loop.md) · [多轮自处理（ReAct）](doc/doc_learn/s01_一个简单的多轮对话.md) |
+| 核心能力 | s02 | [多工具系统](doc/doc_learn/s02_多工具系统.md) |
+| | s03 | [列任务模式（TodoWrite）](doc/doc_learn/s03_列任务模式.md) |
+| | s04 | [子 Agent](doc/doc_learn/s04_子agent.md) |
+| | s05 | [Skill 能力模块](doc/doc_learn/s05_关于skill.md) |
+| 工程保障 | s06 | [上下文压缩](doc/doc_learn/s06_上下文压缩技术.md) |
+| | s07 | [权限管理系统](doc/doc_learn/s07_权限管理系统.md) |
+| | s08 | [Hook 钩子系统](doc/doc_learn/s08_hook钩子系统.md) |
+| | s09 | [Agent 记忆系统](doc/doc_learn/s09_agent记忆系统.md) |
+| | s10 | [系统提示词构建](doc/doc_learn/s10_系统提示词构建.md) |
+| | s11 | [错误恢复](doc/doc_learn/s11_错误恢复.md) |
+| 任务与调度 | s12 | [任务系统（持久化）](doc/doc_learn/s12_任务系统.md) |
+| | s13 | [后台任务](doc/doc_learn/s13_后台任务.md) |
+| | s14 | [定时调度（Cron）](doc/doc_learn/s14_定时调度.md) |
+| 多 Agent 协作 | s15 | [Agent 团队协作](doc/doc_learn/s15_Agent团队协作.md) |
+| | s16 | [团队协议](doc/doc_learn/s16_Agent团队协议.md) |
+| | s17 | [团队自主代理](doc/doc_learn/s17_团队自主代理.md) |
+| | s18 | [工作树与任务隔离](doc/doc_learn/s18_工作树与任务隔离.md) |
+| 扩展进阶 | s19 | [MCP 与插件系统](doc/doc_learn/s19_关于mcp与插件系统.md) |
+| | s20 | [动态工作流](doc/doc_learn/s20_动态工作流.md) |
+
+配套图片资源见 [`doc/images/`](doc/images/)。
+
+---
+
 ## 许可
 
 MIT
